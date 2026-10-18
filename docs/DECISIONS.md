@@ -166,3 +166,21 @@ Code, comments, documentation and commit messages are in English.
 - **Alternatives**: Spanish (the previous rule) or bilingual docs — discarded.
 - **Consequence**: the log strings and the verification recipe in `docs/GATE-F0.md` and
   `AGENTS.md` are in English too; they must stay in sync with the code.
+
+## D18 — Brace style: Allman by hand in the page layer, default in Rust
+
+The page layer (TS/JS) is fully Allman (block braces on their own line), kept by hand —
+there is no formatter there and nothing fights the style. In Rust, Allman was tried and
+discarded.
+
+- **Why**: the user's readability goal was met where it is safe; in Rust it cannot be
+  enforced reliably.
+- **Alternatives**: rustfmt `brace_style = "AlwaysNextLine"` — nightly-only (the
+  system's stable rustfmt ignores it and warns), reaches item braces only (`fn`,
+  `struct`, `impl`, …) with no option for `if/else/match/loop` braces, and any future
+  stable `cargo fmt` would silently revert the items. Installing rustup+nightly just
+  for a partial style was rejected too. dprint for TS was skipped: three small files,
+  no new dependency for that.
+- **Consequence**: TS/JS keeps Allman by hand; Rust stays on the default rustfmt style
+  with no `rustfmt.toml` and no nightly dependency. Hand-moving Rust braces into
+  Allman is not allowed — the next `cargo fmt` would undo it.

@@ -163,6 +163,10 @@ they are worth versioning.
   existing format: decision, why, alternatives, consequence.
 - Scope or product changes are discussed with the user before coding.
 - Finishing a phase's work includes its document (e.g. `docs/ENGINE.md` in F1).
+- Braces: the page layer (TS/JS) is Allman, kept by hand; there is no formatter there.
+  Rust keeps the default rustfmt style (D18): the Allman option is nightly-only and
+  covers item braces only, so it was discarded — never hand-move Rust braces into
+  Allman, the next `cargo fmt` would undo it.
 
 ## 9. Next step
 

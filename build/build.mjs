@@ -14,10 +14,13 @@ const options = {
   logLevel: "info",
 };
 
-if (watch) {
+if (watch)
+{
   const ctx = await context(options);
   await ctx.watch();
   console.log("[build] watching page/…");
-} else {
+}
+else
+{
   await build(options);
 }

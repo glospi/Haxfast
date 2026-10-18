@@ -4,7 +4,8 @@ import { bridge } from "./bridge";
 
 const log = (msg: string, data?: unknown) => bridge.notify("log", { msg, data });
 
-async function main(): Promise<void> {
+async function main(): Promise<void>
+{
   if (window !== window.top) return; // F0: top frame only; the game iframe arrives in F1/F2
 
   await bridge.connect();
@@ -18,15 +19,20 @@ async function main(): Promise<void> {
 
 // Raw FPS sampling: with the unlocked frame-rate flags it should exceed 60;
 // it is the simplest signal to know whether the switches made it through CEF.
-function sampleFps(ms: number): void {
+function sampleFps(ms: number): void
+{
   let frames = 0;
   const start = performance.now();
-  const tick = (): void => {
+  const tick = (): void =>
+  {
     frames++;
     const elapsed = performance.now() - start;
-    if (elapsed < ms) {
+    if (elapsed < ms)
+    {
       requestAnimationFrame(tick);
-    } else {
+    }
+    else
+    {
       const fps = Math.round(((frames * 1000) / elapsed) * 10) / 10;
       log("fps sample", { fps, seconds: Math.round(elapsed / 100) / 10 });
     }
