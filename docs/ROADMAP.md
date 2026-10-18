@@ -3,12 +3,12 @@
 Every phase has an exit criterion. No phase starts before the
 previous one closes (except track R, which runs alongside them from F2).
 
-## F0 — CEF viability gate *(current phase)*
+## F0 — CEF viability gate *(closed 18-10-2026 — all items green)*
 
 Exit criterion: [GATE-F0.md](GATE-F0.md) green. If it fails hard, the user
 is consulted and the fallback is applied (Electron host), which touches only `crates/host/`.
 
-## F1 — Engine performance patches
+## F1 — Engine performance patches *(current phase)*
 
 Four fail-open patches over `game-min.js`, each with an individual toggle and
 visible state:

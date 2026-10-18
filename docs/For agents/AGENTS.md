@@ -31,15 +31,18 @@ Rules that are not negotiable:
 
 ## 2. Current state (18-10-2026)
 
-**F0 — CEF viability gate.** Verified and documented in
+**F0 closed on 18-10-2026** — all 10 items green, documented in
 [../GATE-F0.md](../GATE-F0.md):
 
 - Items 1–6 ✔: host starts with a single window (ALLOY, no Chrome UI), loads
   `https://www.haxball.com/play`, serves the patched `game-min.js`, the game reaches the
-  "Choose nickname" dialog, the bridge responds (`prefs.set`/`prefs.get`) and the
-  frame-rate flags reach CEF.
-- Items 7–10 **pending and manual with the user**: entering a public room,
-  reCAPTCHA, audio, fullscreen. Don't close F0 without those four.
+  main menu, the bridge responds (`prefs.set`/`prefs.get`) and the frame-rate flags
+  reach CEF.
+- Items 7–10 ✔ (manual, real room, confirmed by the user): joining and playing,
+  reCAPTCHA, audio and fullscreen. The logs of that session show no WebRTC/STUN or
+  console errors.
+- **Current phase: F1** (engine performance patches). Its first task is verifying the
+  four patch anchors against the live bundle — see §10.
 
 ## 3. Repo map
 
@@ -52,7 +55,7 @@ page/src               Page layer (TS → dist/page.js): bridge.ts (only channel
                        host), index.ts (bootstrap). Built with esbuild.
 build/build.mjs        Page build (esbuild, --watch in dev).
 docs/                  Normative documentation.
-docs/reference/        REA reports: historical material, local only (git-ignored).
+docs/reference-me/        REA reports: historical material, local only (git-ignored).
 resources/skins        Empty until F3.
 assets/ test/          Empty for now.
 ```
@@ -184,7 +187,7 @@ is already decided, the material that exists and what to ask. The full exit crit
 is in [../ROADMAP.md](../ROADMAP.md) — it is not duplicated.
 
 Note on references: `haxball client/haxball-client/` (the user's Electron client,
-reference code), the All-in-One extension and the REA reports in `docs/reference/`
+reference code), the All-in-One extension and the REA reports in `docs/reference-me/`
 live **outside** the published repo (or are git-ignored) and may not exist on another
 machine; if they are missing, ask the user for them. The extension is not vendored
 (D9): ideas are read, our own modules are ported.
@@ -193,7 +196,7 @@ machine; if they are missing, ask the user for them. The extension is not vendor
 
 - Already decided: one anchor per patch, fail-open, no fingerprints (D5); the
   `__HAXFAST_ENGINE__` runtime carries the version and patch state.
-- Material: `reference/REA-pure-client-report.md §2` (how the game loads and patches
+- Material: `reference-me/REA-pure-client-report.md §2` (how the game loads and patches
   itself) and `§4` (engine patches: what makes the game "fluid"); `engine.rs` (patch
   pipeline + tests) is the template to follow.
 - Questions for the user: which toggles are exposed and with what default; whether the
@@ -209,7 +212,7 @@ machine; if they are missing, ask the user for them. The extension is not vendor
   `requestAnimationFrame` (ARCHITECTURE §Performance rules); Vulkan only as an ANGLE
   backend (VULKAN.md); the ~60 fps cap with the monitor active comes from the desktop
   compositor, not from the client (GATE-F0 notes).
-- Material: `reference/REA-pure-client-report.md §3` (graphics backend, FPS and video,
+- Material: `reference-me/REA-pure-client-report.md §3` (graphics backend, FPS and video,
   minimum latency mode, canvas options) and `VULKAN.md`.
 - Questions: default governor mode; whether the HUD starts visible; whether switching
   the GPU backend requires a restart.
@@ -233,8 +236,8 @@ machine; if they are missing, ask the user for them. The extension is not vendor
 - Already decided: the profile shape already exists in `core::prefs` (`player_name`,
   `avatar`, `extrapolation`, `player_auth_key`, `geo_override`, `fav_rooms`) because the
   game reads that data from `localStorage`; atomic validation and save (D4).
-- Material: `reference/REA-haxball-report.md §4` (identity and storage),
-  `reference/REA-pure-client-report.md §5` (avatars) and `§6` (auth/antifake); in the
+- Material: `reference-me/REA-haxball-report.md §4` (identity and storage),
+  `reference-me/REA-pure-client-report.md §5` (avatars) and `§6` (auth/antifake); in the
   reference client, `inject/src/{profiles,auth}.ts`.
 - Questions: how the auth key is stored (the reference client stores it as is); whether
   profiles are imported from another client; local avatar or by URL.
@@ -269,7 +272,7 @@ machine; if they are missing, ask the user for them. The extension is not vendor
 - Already decided: favorites are per profile (`fav_rooms` already exists in
   `core::prefs`) and there is auto-join on startup; the reference client has the same
   feature.
-- Material: `reference/REA-haxball-report.md §3` (network) and `inject/src/favrooms.ts`.
+- Material: `reference-me/REA-haxball-report.md §3` (network) and `inject/src/favrooms.ts`.
 - Questions: whether "live presence" is a requirement (periodic query to some endpoint)
   or static favorites with auto-join is enough; where the list is shown.
 - First move: read §3 of the REA report and decide where presence comes from (HTTP or
@@ -300,7 +303,7 @@ machine; if they are missing, ask the user for them. The extension is not vendor
 
 - Already decided: `core` stays render-agnostic; `crates/render` is not born until
   there is something to draw (ARCHITECTURE §Reserved for the future).
-- Material: `NATIVE-TRACK.md`, `reference/REA-haxball-report.md §3` (signaling
+- Material: `NATIVE-TRACK.md`, `reference-me/REA-haxball-report.md §3` (signaling
   `wss://p2p.haxball.com`), `reference/estructuras-y-patrones-optimizacion.md` (for our
   own simulation).
 - First move: REA capture of the room handshake and signaling CLI (steps 1–2 of the

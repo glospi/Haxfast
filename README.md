@@ -5,10 +5,11 @@ a page layer (TypeScript → injected JS) that lives on top of the official site
 
 ## Status
 
-**F0 — CEF viability gate.** There are no product features yet: we are
-verifying that CEF can load the official game, intercept `game-min.js`,
-hold a bridge with the page and let rooms in (WebRTC). See
-[docs/GATE-F0.md](docs/GATE-F0.md).
+**F0 closed on 18-10-2026** — [docs/GATE-F0.md](docs/GATE-F0.md) is green: CEF
+loads the official game, HaxFast serves the patched `game-min.js`, the page bridge
+works and real rooms can be played (WebRTC). There are still no product features:
+**F1 (engine performance patches) is the current phase** — see
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Structure
 

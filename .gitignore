@@ -7,4 +7,4 @@ logs/
 docs/For agents/*
 !docs/For agents/AGENTS.md
 # REA reports: local reference material, deliberately not published.
-docs/reference/
+docs/reference-me/

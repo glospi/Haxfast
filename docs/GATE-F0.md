@@ -4,6 +4,8 @@ Objective: verify end to end that embedded Chromium can load the official
 game, serve it an intervened `game-min.js`, talk to the page and enter a real
 room. Everything else in the project depends on this.
 
+**Status: closed on 18-10-2026 — all 10 items green.**
+
 ## How to run
 
 ```sh
@@ -27,13 +29,13 @@ Logs: `~/.config/haxfast/logs/haxfast.log` and `cef.log`. With
 | 1 | The host starts and creates the window | Log: `cef: window created`; the window appears | ✔ 18-10-2026 20:39 (a single 1280×720 window, no Chrome UI) |
 | 2 | The official page loads with the Chrome UA | Log: `page: loaded https://www.haxball.com/play`; the site is visible | ✔ 18-10-2026 20:39 (HTTP 200) |
 | 3 | `game-min.js` is served by HaxFast | Log: `engine: game-min.js ready (… patches: runtime, f0-marker)` and `engine: intercepted …game-min.js` | ✔ 18-10-2026 20:39; `fetch("game-min.js")` from the page returns 173 243 B with `__HAXFAST_ENGINE__` and `/*haxfast:f0*/` |
-| 4 | The game starts (main menu) | The HaxBall menu is visible | ✔ engine in the game iframe + "Choose nickname" dialog (screenshot `/tmp/opencode/juego-f0.png`); visual confirmation from the user when entering the menu is missing |
+| 4 | The game starts (main menu) | The HaxBall menu is visible | ✔ engine in the game iframe + "Choose nickname" dialog and main menu/room list (screenshot `/tmp/opencode/juego-f0.png`; confirmed by the user) |
 | 5 | The page bundle is injected and the bridge responds | Log: `page: bundle injected (dist/page.js)`, `[page] page bootstrap`, `[page] prefs received` | ✔ 18-10-2026 20:39 + `prefs.set`/`prefs.get` roundtrip over CDP |
 | 6 | The frame-rate flags go through CEF | Log: `[page] fps sample {…}` with fps > 60 (ideally 200+) | ✔ the flags arrive (`cef: startup flags added (frame-rate)`); 2296 fps on 18-10-2026 20:27 with this build. With the monitor active, the desktop compositor limits to ~58-60 (see notes) |
-| 7 | Enter a public room and play | Join via UI; WebRTC/STUN log with no fatal errors; the match is visible | pending (manual) |
-| 8 | reCAPTCHA does not block | Login/entry with no blocked captcha | pending (manual) |
-| 9 | Audio works | Hits/goals are heard | pending (manual) |
-| 10 | Fullscreen | The game button enlarges the window to fullscreen | pending (manual) |
+| 7 | Enter a public room and play | Join via UI; WebRTC/STUN log with no fatal errors; the match is visible | ✔ 18-10-2026 ~18:50–18:54 local (21:50 UTC in the log): joined a public room and played (user-confirmed); no WebRTC/STUN errors and no console errors in `haxfast.log`/`cef.log` for that window |
+| 8 | reCAPTCHA does not block | Login/entry with no blocked captcha | ✔ 18-10-2026: no captcha blocked the flow (user-confirmed) |
+| 9 | Audio works | Hits/goals are heard | ✔ 18-10-2026: hits/goals audible (user-confirmed). The AudioContext stays suspended until the first gesture, as logged at startup (expected) |
+| 10 | Fullscreen | The game button enlarges the window to fullscreen | ✔ 18-10-2026: the game button took the window to fullscreen and back (user-confirmed); geometry recovered to 1280×720 |
 
 Notes:
 
@@ -45,7 +47,11 @@ Notes:
   58 fps (vsynced presentation of the desktop compositor). On 18-10-2026 20:27, with the
   same build, the sampling gave 2296 fps. The real unlock inside the game is
   resumed in F2 (governor).
-- Items 7–10: manual with a real room. Write down the result and the log time here.
+- Items 7–10 were manual, in a real room, confirmed by the user; that window of the
+  logs shows no errors (only the ads' own console noise, before the test).
+- Minor observation from item 10: after the fullscreen test an unmapped 200×200 helper
+  window remains (no `WM_STATE`, not visible, no gate impact). Worth watching when the
+  window/fullscreen path is touched again.
 - `window.__HAXFAST_BOOT` and `__HF_BRIDGE__` remain visible in devtools to
   verify the bridge by hand (`__HF_BRIDGE__.call("prefs.get")`). The bridge lives in
   the top frame; the game is in the `gameframe` iframe (same origin).

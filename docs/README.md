@@ -14,7 +14,7 @@ Read in this order depending on what you are looking for:
 Documents that are born in later phases: `ENGINE.md` (F1, engine patches),
 `SKINS.md` (F3), `SOUNDS.md` (F6).
 
-`reference/` is **not versioned**: the REA reports (official game and another
+`reference-me/` is **not versioned**: the REA reports (official game and another
 client) and the loose notes stay on the machine that wrote them, git-ignored. They
 are reference material: they describe the state of the world at the time of
 writing, not the HaxFast architecture.

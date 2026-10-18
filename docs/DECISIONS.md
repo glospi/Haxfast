@@ -153,7 +153,7 @@ license already in the repo. It reverses the "local repo" part of D11.
   anyone reading it, and a remote also protects the history.
 - **Alternatives**: staying local (D11) or a private repo — discarded once publication
   was decided.
-- **Consequence**: everything pushed is public. The REA material (`docs/reference/`,
+- **Consequence**: everything pushed is public. The REA material (`docs/reference-me/`,
   analysis of the official game and of another client) stays local and git-ignored:
   it is not part of the published repo. No CI, no releases yet.
 

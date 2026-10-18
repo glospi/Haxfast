@@ -22,7 +22,7 @@ can be observed (REA) but it is not documented and can change.
 
 With the REA tools: capture an entry to a real room and document the
 handshake, signaling messages, identity format (`player_auth_key`) and
-creation of `RTCPeerConnection`. Output: report in `docs/reference/` (local,
+creation of `RTCPeerConnection`. Output: report in `docs/reference-me/` (local,
 git-ignored) + reusable captures.
 
 ### R2 — Signaling CLI
@@ -33,7 +33,7 @@ A crate of its own (outside `core`) that creates/lists/joins rooms by signaling 
 ### R3 — Headless join
 
 `core` receives the messages from the room host (format already documented by REA in
-`docs/reference/`, local), applies simulation/extrapolation and keeps the match state
+`docs/reference-me/`, local), applies simulation/extrapolation and keeps the match state
 without drawing anything. Output: a full match running in the console.
 
 ### R4 — Gate E3: own minimal client
