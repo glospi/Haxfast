@@ -1,0 +1,10 @@
+node_modules/
+dist/
+native/target/
+*.log
+logs/
+# Agent tooling: version only the project guide, not the third-party skills.
+docs/For agents/*
+!docs/For agents/AGENTS.md
+# REA reports: local reference material, deliberately not published.
+docs/reference/

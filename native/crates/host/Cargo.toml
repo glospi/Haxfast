@@ -1,0 +1,19 @@
+[package]
+name = "haxfast-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "haxfast-host"
+path = "src/main.rs"
+
+[dependencies]
+haxfast-core = { workspace = true }
+serde_json = { workspace = true }
+# default-features = false turns off the Chromium sandbox: F0 runs without it
+# (decision and re-evaluation documented in docs/GATE-F0.md and docs/DECISIONS.md).
+cef = { version = "154", default-features = false }
+tungstenite = "0.30"
+ureq = "3"

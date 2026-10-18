@@ -1,0 +1,19 @@
+{
+  "name": "haxfast",
+  "version": "0.1.0",
+  "private": true,
+  "description": "HaxFast — HaxBall client with a CEF host in Rust",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "build:page": "node build/build.mjs",
+    "dev:page": "node build/build.mjs --watch",
+    "build:native": "cargo build --manifest-path native/Cargo.toml",
+    "build": "npm run build:page && npm run build:native",
+    "check:page": "tsc --noEmit",
+    "test": "cargo test --manifest-path native/Cargo.toml"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}
