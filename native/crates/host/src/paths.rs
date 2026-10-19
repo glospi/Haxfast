@@ -35,6 +35,11 @@ pub fn cache_dir() -> PathBuf {
     user_data_dir().join("cef-cache")
 }
 
+/// Disk cache of the ORIGINAL engine bundle, keyed by the deploy path (F1).
+pub fn engine_dir() -> PathBuf {
+    user_data_dir().join("engine")
+}
+
 /// `dist/page.js`: tries `$HAXFAST_PAGE_BUNDLE`, the current directory and paths
 /// relative to the executable (in dev: `native/target/debug` → `<repo>/dist`).
 pub fn page_bundle() -> Option<PathBuf> {

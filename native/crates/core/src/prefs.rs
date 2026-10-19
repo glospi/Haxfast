@@ -58,6 +58,8 @@ pub struct Preferences {
     pub version: u32,
     pub active_profile: String,
     pub profiles: Vec<Profile>,
+    /// F1: engine performance patches (`engine` section, all default ON).
+    pub engine: EngineToggles,
 }
 
 pub const CURRENT_VERSION: u32 = 1;
@@ -68,6 +70,30 @@ impl Default for Preferences {
             version: CURRENT_VERSION,
             active_profile: Profile::default().id.clone(),
             profiles: vec![Profile::default()],
+            engine: EngineToggles::default(),
+        }
+    }
+}
+
+/// F1 engine patch toggles (keys `snake_case` in `preferences.json`; the runtime
+/// uses the dashed patch names). All default ON; a patch also fails open when
+/// its anchor is missing even if its toggle is on.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EngineToggles {
+    pub canvas_resize_cache: bool,
+    pub stadium_layer_cache: bool,
+    pub zero_input_tolerance: bool,
+    pub hidden_frame_skip: bool,
+}
+
+impl Default for EngineToggles {
+    fn default() -> Self {
+        Self {
+            canvas_resize_cache: true,
+            stadium_layer_cache: true,
+            zero_input_tolerance: true,
+            hidden_frame_skip: true,
         }
     }
 }
@@ -216,5 +242,30 @@ mod tests {
         let (loaded, warn) = Preferences::load(&dir.join("nope.json"));
         assert_eq!(loaded, Preferences::default());
         assert!(warn.is_some());
+    }
+
+    #[test]
+    fn engine_toggles_default_on_and_survive_old_files() {
+        // Defaults: all four patches ON.
+        let toggles = Preferences::default().engine;
+        assert!(toggles.canvas_resize_cache);
+        assert!(toggles.stadium_layer_cache);
+        assert!(toggles.zero_input_tolerance);
+        assert!(toggles.hidden_frame_skip);
+
+        // An old file without the `engine` section falls back to all ON.
+        let dir = test_dir("prefs-oldnoengine");
+        let path = dir.join("preferences.json");
+        std::fs::write(
+            &path,
+            r#"{"version":1,"active_profile":"default","profiles":[
+                {"id":"default","name":"Default","autosave":true,"player_name":null,
+                 "avatar":null,"extrapolation":null,"player_auth_key":null,
+                 "geo_override":null,"fav_rooms":[]}]}"#,
+        )
+        .unwrap();
+        let (loaded, warn) = Preferences::load(&path);
+        assert!(warn.is_none());
+        assert_eq!(loaded.engine, EngineToggles::default());
     }
 }

@@ -1,14 +1,20 @@
-//! Game engine: downloads `game-min.js`, injects the HaxFast runtime into it and
-//! serves it to the browser instead of the original.
+//! Game engine: downloads `game-min.js`, patches it (F1), injects the HaxFast
+//! runtime into it and serves it to the browser instead of the original.
 //!
-//! Fail-open: on any problem it returns `None` and the client plays with the
-//! official file untouched (project rule: never break the ability to play).
+//! Fail-open at every level: an anchor that is not found leaves its patch out,
+//! a disk-cache error falls back to the network, and any problem returns `None`
+//! so the client plays with the official file untouched.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::app::USER_AGENT;
 use crate::log;
+use haxfast_core::prefs::EngineToggles;
+
+/// Runtime source, injected after `'use strict'` with the placeholders filled.
+const RUNTIME: &str = include_str!("runtime.js");
 
 /// Content ready to serve + summary for logs and status.
 pub struct Engine {
@@ -17,11 +23,12 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// Downloads and patches the bundle. `None` = no patches (fail-open).
+    /// Downloads (or reuses the disk cache of) the bundle and patches it.
+    /// `None` = no patches (fail-open).
     ///
     /// The game path changes on every deploy (`/<key>/__cache_static__/g/game.html`),
     /// so it is resolved from the official page first.
-    pub fn prepare(page_url: &str) -> Option<Self> {
+    pub fn prepare(page_url: &str, toggles: &EngineToggles, cache_dir: &Path) -> Option<Self> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(20)))
             .build()
@@ -37,10 +44,25 @@ impl Engine {
         log::info(&format!("engine: game page at {game_url}"));
 
         let bundle_url = sibling_url(&game_url, "game-min.js");
-        let original = fetch_text(&agent, &bundle_url)?;
 
-        let (patched, patches) = patch(&original);
-        let status = format!("{} bytes, patches: {}", original.len(), patches.join(", "));
+        // Always resolve the deploy live (the page above is the resolution
+        // already); the bundle itself may come from disk. Never serve a stale
+        // entry for a different deploy: the cache key is the deploy path.
+        let (original, source) = match disk_cache_load(cache_dir, &bundle_url) {
+            Some(original) => (original, "disk cache"),
+            None => {
+                let original = fetch_text(&agent, &bundle_url)?;
+                disk_cache_save(cache_dir, &bundle_url, &original);
+                (original, "download")
+            }
+        };
+
+        let (patched, patches) = patch(&original, toggles);
+        let status = format!(
+            "{} bytes ({source}), patches: {}",
+            original.len(),
+            patches.join(", ")
+        );
         log::info(&format!("engine: game-min.js ready ({status})"));
 
         Some(Self {
@@ -132,28 +154,108 @@ fn origin_of(url: &str) -> &str {
     }
 }
 
-/// Runtime + patches. Returns the final bundle and what was applied.
-fn patch(original: &str) -> (String, Vec<&'static str>) {
-    let mut patches = Vec::new();
+/// Runtime + patches. Every patch is one unique anchor verified against the
+/// live bundle and one tiny text substitution; an anchor not found simply
+/// leaves out its patch (fail-open). The runtime is injected first (it must be
+/// the first statement) but built last, so `patches` can list what got applied.
+fn patch(original: &str, toggles: &EngineToggles) -> (String, Vec<&'static str>) {
+    let mut patches = vec!["runtime"];
+    let mut text = original.to_string();
 
-    // The runtime goes after `'use strict'` so the file does not leave strict mode.
-    let runtime = format!(
-        ";globalThis.__HAXFAST_ENGINE__={{version:{:?},patches:[]}};",
-        haxfast_core::version()
+    // zero-input-tolerance: input tolerance 2 → 0 (60 Hz ticks without the
+    // ~33 ms of dead time). `this.vo=600;super.Za(` right after is context and
+    // stays untouched.
+    try_patch(
+        &mut text,
+        toggles.zero_input_tolerance,
+        "zero-input-tolerance",
+        "this.Od=2",
+        "this.Od=0",
+        &mut patches,
     );
-    let mut patched = insert_after_directive(original, &runtime);
-    patches.push("runtime");
 
-    // F0: marker inside the anchor of the future zero-input-tolerance patch. It does
-    // not change behavior: it proves the pipeline intercepts and replaces bytes.
-    if let Some(index) = patched.find("this.Od=2") {
-        patched.insert_str(index + "this.Od=2".len(), "/*haxfast:f0*/");
-        patches.push("f0-marker");
-    } else {
-        patches.push("no-anchor"); // fail-open: only the runtime is served
+    // canvas-resize-cache: only the per-frame rect read is delegated to the
+    // runtime (ResizeObserver cache); the backing-store write stays guarded and
+    // devicePixelRatio stays live at the call site.
+    try_patch(
+        &mut text,
+        toggles.canvas_resize_cache,
+        "canvas-resize-cache",
+        "this.oa.getBoundingClientRect()",
+        "__HAXFAST_ENGINE__.rect(this.oa)",
+        &mut patches,
+    );
+
+    // stadium-layer-cache: the per-frame Dr+Cr passes become a cached texture
+    // blit managed by the runtime. The zoom `h` local at the call site is exact.
+    try_patch(
+        &mut text,
+        toggles.stadium_layer_cache,
+        "stadium-layer-cache",
+        "this.Dr(c.U);this.Cr(c.U);",
+        "__HAXFAST_ENGINE__.stadium(this,h,c.U);",
+        &mut patches,
+    );
+
+    // hidden-frame-skip: the live-view loop keeps scheduling rAF but returns
+    // before drawing while the page is hidden. The needle carries the unique
+    // `this.W.A()` so the other loop class (replay/menu) is never touched.
+    try_patch(
+        &mut text,
+        toggles.hidden_frame_skip,
+        "hidden-frame-skip",
+        "this.Re=window.requestAnimationFrame(M(this,this.sf));this.W.A();",
+        "this.Re=window.requestAnimationFrame(M(this,this.sf));\
+         if(__HAXFAST_ENGINE__.shouldRender())return;this.W.A();",
+        &mut patches,
+    );
+
+    let toggles_json = serde_json::json!({
+        "canvas-resize-cache": toggles.canvas_resize_cache,
+        "stadium-layer-cache": toggles.stadium_layer_cache,
+        "zero-input-tolerance": toggles.zero_input_tolerance,
+        "hidden-frame-skip": toggles.hidden_frame_skip,
+    })
+    .to_string();
+    let patches_json = serde_json::to_string(&patches).unwrap_or_else(|_| "[]".into());
+    let runtime = RUNTIME
+        .replace("__HF_VERSION__", haxfast_core::version())
+        .replace("__HF_TOGGLES__", &toggles_json)
+        .replace("__HF_PATCHES__", &patches_json);
+
+    (insert_after_directive(&text, &runtime), patches)
+}
+
+/// Applies `replacement` in place of `anchor`, exactly once. Logged outcomes:
+/// off (preference), applied, or skipped when the anchor is missing (fail-open).
+fn try_patch(
+    text: &mut String,
+    enabled: bool,
+    name: &'static str,
+    anchor: &str,
+    replacement: &str,
+    patches: &mut Vec<&'static str>,
+) {
+    if !enabled {
+        log::info(&format!("engine: {name} off (preference)"));
+        return;
     }
+    if replace_once(text, anchor, replacement) {
+        patches.push(name);
+    } else {
+        log::warn(&format!("engine: {name} skipped: anchor not found (fail-open)"));
+    }
+}
 
-    (patched, patches)
+/// Replaces the first occurrence of `anchor` with `replacement`.
+fn replace_once(text: &mut String, anchor: &str, replacement: &str) -> bool {
+    match text.find(anchor) {
+        Some(index) => {
+            text.replace_range(index..index + anchor.len(), replacement);
+            true
+        }
+        None => false,
+    }
 }
 
 /// Inserts `code` right after the `'use strict'` directive (looked up only in the
@@ -176,9 +278,100 @@ fn insert_after_directive(source: &str, code: &str) -> String {
     format!("{code}{source}")
 }
 
+/// Digest for cache integrity (std `DefaultHasher`: no new dependency; stable
+/// across runs for the same input).
+fn content_hash(bytes: &[u8]) -> u64 {
+    use std::hash::Hasher;
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(bytes);
+    hasher.finish()
+}
+
+/// Cache id of a bundle: hash of its URL (the path rotates per deploy).
+fn bundle_id(bundle_url: &str) -> String {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bundle_url.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Loads the ORIGINAL bundle from `$HAXFAST_HOME/engine/`. Hit only when the
+/// stored URL matches and the stored content hash still matches; anything else
+/// is a miss (logged when surprising) and the network step takes over.
+fn disk_cache_load(dir: &Path, bundle_url: &str) -> Option<String> {
+    if !dir.is_dir() {
+        return None;
+    }
+    let id = bundle_id(bundle_url);
+    let meta_text = std::fs::read_to_string(dir.join(format!("{id}.json"))).ok()?;
+    let meta: serde_json::Value = serde_json::from_str(&meta_text).ok()?;
+    if meta.get("url").and_then(|value| value.as_str()) != Some(bundle_url) {
+        return None;
+    }
+    let raw = std::fs::read(dir.join(format!("{id}.js"))).ok()?;
+    if meta.get("hash").and_then(|value| value.as_u64()) != Some(content_hash(&raw)) {
+        log::warn("engine: disk cache entry is corrupt (hash mismatch): re-downloading");
+        return None;
+    }
+    match String::from_utf8(raw) {
+        Ok(original) => Some(original),
+        Err(_) => {
+            log::warn("engine: disk cache entry is not UTF-8: re-downloading");
+            None
+        }
+    }
+}
+
+/// Best-effort save of the ORIGINAL bundle (never fatal). `.js` first: a partial
+/// pair without meta can only miss, never mislead.
+fn disk_cache_save(dir: &Path, bundle_url: &str, original: &str) {
+    if let Err(error) = std::fs::create_dir_all(dir) {
+        log::warn(&format!("engine: disk cache disabled ({error})"));
+        return;
+    }
+    let id = bundle_id(bundle_url);
+    let meta = serde_json::json!({
+        "url": bundle_url,
+        "hash": content_hash(original.as_bytes()),
+    });
+    let entry = dir.join(format!("{id}.js"));
+    let error = std::fs::write(&entry, original).and_then(|_| {
+        std::fs::write(dir.join(format!("{id}.json")), meta.to_string())
+    });
+    if let Err(error) = error {
+        let _ = std::fs::remove_file(&entry);
+        log::warn(&format!("engine: disk cache save failed ({error})"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("haxfast-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A tiny fake of the interesting fragments of the live bundle (all four
+    /// F1 anchors in order). Text-only: the transforms are string surgery.
+    fn fixture() -> String {
+        [
+            "'use strict';",
+            "(function(){",
+            "Z(){this.Od=2;this.vo=600;Za(x)};",
+            "sf(){this.Re=window.requestAnimationFrame(M(this,this.sf));this.W.A();",
+            "\nthis.za.A();this.Rc()};",
+            "Ds(){var b=this.oa.getBoundingClientRect()};",
+            "Rc(){h=2;this.Dr(c.U);this.Cr(c.U);}",
+            "})()",
+        ]
+        .concat()
+    }
 
     #[test]
     fn inserts_after_use_strict() {
@@ -228,10 +421,84 @@ mod tests {
     }
 
     #[test]
-    fn patch_marks_the_anchor_without_changing_its_value() {
-        let (out, patches) = patch("'use strict';x();this.Od=2;y();");
-        assert!(out.contains("this.Od=2/*haxfast:f0*/"));
-        assert!(patches.contains(&"f0-marker"));
+    fn applies_every_patch_when_all_anchors_exist() {
+        let (out, patches) = patch(&fixture(), &EngineToggles::default());
+        assert_eq!(
+            patches,
+            vec![
+                "runtime",
+                "zero-input-tolerance",
+                "canvas-resize-cache",
+                "stadium-layer-cache",
+                "hidden-frame-skip",
+            ]
+        );
+        assert!(out.contains("this.Od=0;this.vo=600;"), "{out}");
+        assert!(out.contains("__HAXFAST_ENGINE__.rect(this.oa)"), "{out}");
+        assert!(out.contains("__HAXFAST_ENGINE__.stadium(this,h,c.U);"), "{out}");
+        assert!(
+            out.contains(
+                "window.requestAnimationFrame(M(this,this.sf));\
+                 if(__HAXFAST_ENGINE__.shouldRender())return;this.W.A();"
+            ),
+            "{out}"
+        );
         assert!(out.starts_with("'use strict';"));
+        assert!(!out.contains("this.Od=2;"));
+    }
+
+    #[test]
+    fn missing_anchor_leaves_its_patch_out_and_the_bundle_working() {
+        let broken = fixture().replacen("this.Od=2", "this.Od=9", 1);
+        let (out, patches) = patch(&broken, &EngineToggles::default());
+        assert!(!patches.contains(&"zero-input-tolerance"));
+        assert!(out.contains("this.Od=9;"));
+        assert!(patches.contains(&"stadium-layer-cache"));
+        assert!(out.starts_with("'use strict';"));
+    }
+
+    #[test]
+    fn disabled_toggles_keep_the_vanilla_bytes() {
+        let toggles = EngineToggles {
+            canvas_resize_cache: false,
+            stadium_layer_cache: false,
+            zero_input_tolerance: false,
+            hidden_frame_skip: false,
+        };
+        let (out, patches) = patch(&fixture(), &toggles);
+        assert_eq!(patches, vec!["runtime"]);
+        assert!(out.contains("this.Od=2"));
+        assert!(out.contains("this.oa.getBoundingClientRect()"));
+        assert!(out.contains("this.Dr(c.U);this.Cr(c.U);"));
+        assert!(out.contains("window.requestAnimationFrame(M(this,this.sf));this.W.A();"));
+    }
+
+    #[test]
+    fn runtime_carries_version_toggles_and_the_patch_list() {
+        let (out, patches) = patch(&fixture(), &EngineToggles::default());
+        assert!(out.contains(haxfast_core::version()), "{out}");
+        assert!(out.contains("\"canvas-resize-cache\":true"), "{out}");
+        assert!(out.contains("[\"runtime\",\"zero-input-tolerance\""), "{out}");
+        assert_eq!(patches.first(), Some(&"runtime"));
+    }
+
+    #[test]
+    fn disk_cache_round_trip_and_corruption() {
+        let dir = temp_dir("engine-cache");
+        let url = "https://www.haxball.com/H4mQWPXF/__cache_static__/g/game-min.js";
+
+        assert_eq!(disk_cache_load(&dir, url), None);
+
+        disk_cache_save(&dir, url, "'use strict';BODY;");
+        assert_eq!(disk_cache_load(&dir, url), Some("'use strict';BODY;".to_string()));
+
+        // A different deploy path is a different key: miss.
+        let other = "https://www.haxball.com/OTHER/__cache_static__/g/game-min.js";
+        assert_eq!(disk_cache_load(&dir, other), None);
+
+        // Corrupt bytes (hash mismatch) are a miss: the network takes over.
+        let id = bundle_id(url);
+        std::fs::write(dir.join(format!("{id}.js")), b"corrupt").unwrap();
+        assert_eq!(disk_cache_load(&dir, url), None);
     }
 }
