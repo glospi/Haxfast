@@ -137,7 +137,15 @@ fn init_runtime() -> app::HostState {
     log::info(&format!("bridge: listening on {}", bridge.ws_url()));
 
     let requested_url = std::env::var("HAXFAST_URL").unwrap_or_else(|_| app::GAME_URL.to_string());
-    let engine = match engine::Engine::prepare(&requested_url) {
+
+    // F1: the engine patches read their toggles from preferences.json.
+    let (prefs, prefs_warning) = haxfast_core::prefs::Preferences::load(&paths::prefs_file());
+    if let Some(warning) = prefs_warning {
+        log::warn(&format!("prefs: {warning}"));
+    }
+
+    let engine = match engine::Engine::prepare(&requested_url, &prefs.engine, &paths::engine_dir())
+    {
         Some(engine) => {
             log::info(&format!("engine: ready ({})", engine.status));
             Some(engine)

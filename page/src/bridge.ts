@@ -4,8 +4,10 @@
 
 type Boot = { wsUrl: string; token: string };
 
-declare global {
-  interface Window {
+declare global
+{
+  interface Window
+  {
     __HAXFAST_BOOT?: Boot;
   }
 }
@@ -18,25 +20,33 @@ const pending = new Map<number, Pending>();
 
 export const bridge = {
   /** Connects to the host. Returns false if the page runs outside HaxFast. */
-  async connect(): Promise<boolean> {
+  async connect(): Promise<boolean>
+  {
     const boot = window.__HAXFAST_BOOT;
-    if (!boot) {
+    if (!boot)
+    {
       console.warn("[haxfast] no __HAXFAST_BOOT: running outside the client");
       return false;
     }
-    return await new Promise((resolve) => {
+    return await new Promise((resolve) =>
+    {
       ws = new WebSocket(boot.wsUrl);
-      ws.onopen = () => {
+      ws.onopen = () =>
+      {
         // Mandatory first message: the host closes the connection without it.
         ws?.send(JSON.stringify({ method: "hello", params: { token: boot.token } }));
         resolve(true);
       };
       ws.onerror = () => resolve(false);
-      ws.onmessage = (ev) => {
+      ws.onmessage = (ev) =>
+      {
         let msg: { id?: number; result?: unknown; error?: string };
-        try {
+        try
+        {
           msg = JSON.parse(String(ev.data));
-        } catch {
+        }
+        catch
+        {
           return; // invalid message: ignore it
         }
         if (typeof msg.id !== "number") return;
@@ -49,9 +59,12 @@ export const bridge = {
   },
 
   /** Call with response. With no host connected it resolves undefined so the page does not break. */
-  call(method: string, params?: unknown): Promise<unknown> {
-    return new Promise((resolve, reject) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+  call(method: string, params?: unknown): Promise<unknown>
+  {
+    return new Promise((resolve, reject) =>
+    {
+      if (!ws || ws.readyState !== WebSocket.OPEN)
+      {
         resolve(undefined);
         return;
       }
@@ -62,8 +75,10 @@ export const bridge = {
   },
 
   /** Message without response (logs, metrics). */
-  notify(method: string, params?: unknown): void {
-    if (ws && ws.readyState === WebSocket.OPEN) {
+  notify(method: string, params?: unknown): void
+  {
+    if (ws && ws.readyState === WebSocket.OPEN)
+    {
       ws.send(JSON.stringify({ method, params }));
     }
   },

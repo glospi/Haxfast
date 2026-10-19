@@ -8,19 +8,13 @@ previous one closes (except track R, which runs alongside them from F2).
 Exit criterion: [GATE-F0.md](GATE-F0.md) green. If it fails hard, the user
 is consulted and the fallback is applied (Electron host), which touches only `crates/host/`.
 
-## F1 — Engine performance patches *(current phase)*
+## F1 — Engine performance patches *(closed 19-10-2026 — shipped)*
 
-Four fail-open patches over `game-min.js`, each with an individual toggle and
-visible state:
-
-1. `canvas-resize-cache` — avoids recalculating the canvas layout when the size
-   did not change.
-2. `stadium-layer-cache` — caches the static layers of the stadium.
-3. `zero-input-tolerance` — input tolerance 0 (immediate response).
-4. `hidden-frame-skip` — skips render when the window is not visible.
-
-Plus: on-disk cache of the original bundle (hash + `userData/engine/`),
-`__HAXFAST_ENGINE__` runtime with patch state, and [docs/ENGINE.md](ENGINE.md).
+Exit criterion met: four fail-open patches over `game-min.js` with individual
+toggles and visible state, cache of the original bundle, and
+[ENGINE.md](ENGINE.md). Details live there now (anchors, bake mechanics,
+honest limits). F0's `/*haxfast:f0*/` marker patch and its anchor were replaced
+by the real pipeline.
 
 ## F2 — Speed and metrics
 

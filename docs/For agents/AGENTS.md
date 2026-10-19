@@ -29,7 +29,7 @@ Rules that are not negotiable:
 - Don't vendor the All-in-One extension or `game-min.js`; our own features are ported.
 - Don't add dependencies without discussing it.
 
-## 2. Current state (18-10-2026)
+## 2. Current state (19-10-2026)
 
 **F0 closed on 18-10-2026** — all 10 items green, documented in
 [../GATE-F0.md](../GATE-F0.md):
@@ -41,16 +41,19 @@ Rules that are not negotiable:
 - Items 7–10 ✔ (manual, real room, confirmed by the user): joining and playing,
   reCAPTCHA, audio and fullscreen. The logs of that session show no WebRTC/STUN or
   console errors.
-- **Current phase: F1** (engine performance patches). Its first task is verifying the
-  four patch anchors against the live bundle — see §10.
+- **Current phase: F2** (speed and metrics). F1 closed on 19-10-2026: the four engine
+  patches, the runtime `__HAXFAST_ENGINE__` (toggles + state) and the disk cache of
+  the original bundle are live and verified. Two bugs found in live play were fixed
+  before closing (inverted hidden-frame guard, stadium bake coverage) — details and
+  anchors in [../ENGINE.md](../ENGINE.md). engine.rs no longer emits the F0 marker.
 
 ## 3. Repo map
 
 ```
 native/crates/core     haxfast-core: pure logic (prefs, validation). No CEF or DOM.
 native/crates/host     CEF binary: main (startup/preload), app (handlers, window,
-                       injection), engine (bundle download and patching), bridge (WS),
-                       paths, log.
+                       injection), engine (bundle download, patching, disk cache),
+                       runtime.js (injected engine runtime), bridge (WS), paths, log.
 page/src               Page layer (TS → dist/page.js): bridge.ts (only channel to the
                        host), index.ts (bootstrap). Built with esbuild.
 build/build.mjs        Page build (esbuild, --watch in dev).
@@ -67,7 +70,7 @@ npm install
 npm run build:page                 # dist/page.js (re-read on every load: rebuild + F5 is enough)
 cargo build --manifest-path native/Cargo.toml -p haxfast-host
 ./native/target/debug/haxfast-host
-cargo test --manifest-path native/Cargo.toml   # core (6) + host (8)
+cargo test --manifest-path native/Cargo.toml   # core (7) + host (12)
 npm run check:page                             # tsc --noEmit
 ```
 
@@ -97,12 +100,15 @@ Log signals (all must appear):
 
 ```
 cef: startup flags added (frame-rate)
-engine: game-min.js ready (... bytes, patches: runtime, f0-marker)
+engine: game-min.js ready (... bytes (download|disk cache), patches: runtime, zero-input-tolerance, canvas-resize-cache, stadium-layer-cache, hidden-frame-skip)
 engine: intercepted https://.../game-min.js
 page: loaded https://www.haxball.com/play (HTTP 200)
 page: bundle injected (dist/page.js)
 [page] page bootstrap / prefs received / fps sample
 ```
+
+A patch missing its anchor logs `engine: <name> skipped: anchor not found (fail-open)`
+— the game keeps working, only that patch stays out.
 
 With CDP (`http://127.0.0.1:9222/json/list` → target WebSocket), check **inside the game
 iframe** (the bridge and the engine live in different frames):
@@ -117,8 +123,9 @@ JSON.stringify({
 });
 ```
 
-And to see the bytes actually served (they must carry `__HAXFAST_ENGINE__` and
-`/*haxfast:f0*/`): `await fetch(f.src.replace(/game\.html$/, "game-min.js")).then(r => r.text())`.
+And to see the bytes actually served (they must carry `__HAXFAST_ENGINE__` and the
+patch sites, e.g. `__HAXFAST_ENGINE__.stadium(this,h,c.U)`):
+`await fetch(f.src.replace(/game\.html$/, "game-min.js")).then(r => r.text())`.
 
 A screenshot (`Page.captureScreenshot`) is the fastest visual proof that the game
 started. Write the test scripts in `/tmp/opencode` (ephemeral) or ask the user whether
@@ -163,17 +170,18 @@ they are worth versioning.
   existing format: decision, why, alternatives, consequence.
 - Scope or product changes are discussed with the user before coding.
 - Finishing a phase's work includes its document (e.g. `docs/ENGINE.md` in F1).
+- Braces: the page layer (TS/JS) is Allman, kept by hand; there is no formatter there.
+  Rust keeps the default rustfmt style (D18): the Allman option is nightly-only and
+  covers item braces only, so it was discarded — never hand-move Rust braces into
+  Allman, the next `cargo fmt` would undo it.
 
 ## 9. Next step
 
-**F1 — performance patches to the engine** (details and exit criterion in
-[../ROADMAP.md](../ROADMAP.md)): four fail-open patches on `game-min.js`, each one
-with a toggle and state visible in `__HAXFAST_ENGINE__`:
-
-1. `canvas-resize-cache`
-2. `stadium-layer-cache`
-3. `zero-input-tolerance` (the known anchor is `this.Od=2` → `0`)
-4. `hidden-frame-skip`
+**F2 — speed and metrics** (details and exit criterion in
+[../ROADMAP.md](../ROADMAP.md)): FPS governor (gsync/locked/unlimited style modes),
+minimal HUD (FPS, p95, patch state, hide hotkey), real frame time sampling, GPU
+backend selector. The F1 engine state (`__HAXFAST_ENGINE__.patches/toggles`) is what
+the HUD shows, and HUD code is where `set()` gets a persistent UI.
 
 Plus: disk cache of the original bundle (hash + `userData/engine/`) and `docs/ENGINE.md`.
 Before writing patches, verify each anchor against the real downloaded bundle
@@ -192,19 +200,21 @@ live **outside** the published repo (or are git-ignored) and may not exist on an
 machine; if they are missing, ask the user for them. The extension is not vendored
 (D9): ideas are read, our own modules are ported.
 
-### F1 — Engine performance patches
+### F1 — Engine performance patches *(closed 19-10-2026)*
 
-- Already decided: one anchor per patch, fail-open, no fingerprints (D5); the
-  `__HAXFAST_ENGINE__` runtime carries the version and patch state.
-- Material: `reference-me/REA-pure-client-report.md §2` (how the game loads and patches
-  itself) and `§4` (engine patches: what makes the game "fluid"); `engine.rs` (patch
-  pipeline + tests) is the template to follow.
-- Questions for the user: which toggles are exposed and with what default; whether the
-  disk cache stores the original or the patched bundle; whether a missed anchor should
-  retry on the next deploy.
-- First move: download the live bundle and look for the real anchors. Only
-  `zero-input-tolerance` (text `this.Od=2`) and the marker `/*haxfast:f0*/` are
-  confirmed; `canvas-resize-cache` and `stadium-layer-cache` have no verified anchor.
+- Shipped: `runtime.js` (toggles + `rect`/`stadium`/`shouldRender`) injected after
+  `'use strict'`; four text transforms in `engine.rs` with all anchors verified
+  unique against the live bundle (see [../ENGINE.md](../ENGINE.md) for each one and
+  its honest limits); `EngineToggles` in `core/prefs.rs` (`engine` section, all ON
+  by default, D20); disk cache of the original bundle in `engine_dir()` (D19). The
+  F0 marker patch is gone.
+- Material: `reference-me/REA-pure-client-report.md §2` and `§4` (source of the
+  anchors), `reference-me/REA-haxball-report.md` (renderer `T`, loop classes,
+  `m.j` settings), `engine.rs` tests (fail-open cases are unit-tested, never
+  against the live bundle).
+- Known risks for F2+: the stadium bake is the only patch with real graphics logic —
+  if a future stadium type ever renders wrong, the toggle `stadium-layer-cache`
+  isolates it; `set()` changes are not persisted yet (F2 HUD work).
 
 ### F2 — Speed and metrics
 
