@@ -29,7 +29,7 @@ Rules that are not negotiable:
 - Don't vendor the All-in-One extension or `game-min.js`; our own features are ported.
 - Don't add dependencies without discussing it.
 
-## 2. Current state (18-10-2026)
+## 2. Current state (19-10-2026)
 
 **F0 closed on 18-10-2026** — all 10 items green, documented in
 [../GATE-F0.md](../GATE-F0.md):
@@ -43,8 +43,9 @@ Rules that are not negotiable:
   console errors.
 - **Current phase: F2** (speed and metrics). F1 closed on 19-10-2026: the four engine
   patches, the runtime `__HAXFAST_ENGINE__` (toggles + state) and the disk cache of
-  the original bundle are live and verified — details and anchors in
-  [../ENGINE.md](../ENGINE.md). engine.rs no longer emits the F0 marker.
+  the original bundle are live and verified. Two bugs found in live play were fixed
+  before closing (inverted hidden-frame guard, stadium bake coverage) — details and
+  anchors in [../ENGINE.md](../ENGINE.md). engine.rs no longer emits the F0 marker.
 
 ## 3. Repo map
 
@@ -69,7 +70,7 @@ npm install
 npm run build:page                 # dist/page.js (re-read on every load: rebuild + F5 is enough)
 cargo build --manifest-path native/Cargo.toml -p haxfast-host
 ./native/target/debug/haxfast-host
-cargo test --manifest-path native/Cargo.toml   # core (6) + host (8)
+cargo test --manifest-path native/Cargo.toml   # core (7) + host (12)
 npm run check:page                             # tsc --noEmit
 ```
 

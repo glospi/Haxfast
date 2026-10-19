@@ -125,3 +125,8 @@ fail-open, toggles off, cache round-trip and corruption). The live recipe is in
 - second start: the same line but `(disk cache)` — no bundle download;
 - no JS exceptions or console errors during normal play with all four patches on;
   scheduling of the rAF loop continues while hidden (only the draw chain stops).
+- live sessions also exercised the two bugs fixed before closing F1: the inverted
+  hidden-frame guard (every frame returned before resize/draw) and the stadium bake
+  reuse window, which could leave up to 280 px of the left edge with the previous
+  frame after panning left. The bake now blits only while the transformed visible
+  rect (HUD offset included) is fully inside the baked region.
