@@ -91,18 +91,30 @@ globalThis.__HAXFAST_ENGINE__ = (function ()
       const squeezed = zoom * Math.sqrt(BAKE_MAX_PIXELS / (4 * canvas.width * canvas.height));
       scale = squeezed < zoom * 0.25 ? zoom * 0.25 : squeezed;
     }
-    if (state.tex && state.scale === scale && state.worldW === worldW && state.worldH === worldH &&
-        T.Ya.x >= state.x0 + state.worldW * 0.25 &&
-        T.Ya.x + state.worldW <= state.x0 + state.worldW * 1.75 &&
-        T.Ya.y >= state.y0 + state.worldH * 0.25 &&
-        T.Ya.y + state.worldH <= state.y0 + state.worldH * 1.75)
+    if (state.tex && state.scale === scale && state.worldW === worldW && state.worldH === worldH)
     {
-      T.c.drawImage(state.tex, state.x0, state.y0, state.worldW * 2, state.worldH * 2);
-      return;
+      // Reuse only while the visible world rect (the transform includes the HUD
+      // offset) stays inside the baked region; otherwise re-bake. Anything less
+      // than full containment leaves stale pixels, because this blit replaced
+      // the full-canvas clear of Dr.
+      const m = T.c.getTransform();
+      if (m.a > 0)
+      {
+        const left = -m.e / m.a;
+        const right = (canvas.width - m.e) / m.a;
+        const top = -m.f / m.a;
+        const bottom = (canvas.height - m.f) / m.a;
+        if (left >= state.x0 && right <= state.x0 + state.worldW * 2 &&
+            top >= state.y0 && bottom <= state.y0 + state.worldH * 2)
+        {
+          T.c.drawImage(state.tex, state.x0, state.y0, state.worldW * 2, state.worldH * 2);
+          return;
+        }
+      }
     }
-    // New region centered on the visible rect (snapped so panning is cheap).
-    const regionX = Math.floor((T.Ya.x - worldW / 2) / BAKE_GRID) * BAKE_GRID;
-    const regionY = Math.floor((T.Ya.y - worldH / 2) / BAKE_GRID) * BAKE_GRID;
+    // New region centered on the camera (snapped so panning is cheap).
+    const regionX = Math.floor((T.Ya.x - worldW) / BAKE_GRID) * BAKE_GRID;
+    const regionY = Math.floor((T.Ya.y - worldH) / BAKE_GRID) * BAKE_GRID;
     const texW = Math.max(1, Math.round(worldW * 2 * scale));
     const texH = Math.max(1, Math.round(worldH * 2 * scale));
     const tex = document.createElement("canvas");
