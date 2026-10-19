@@ -200,13 +200,14 @@ fn patch(original: &str, toggles: &EngineToggles) -> (String, Vec<&'static str>)
     // hidden-frame-skip: the live-view loop keeps scheduling rAF but returns
     // before drawing while the page is hidden. The needle carries the unique
     // `this.W.A()` so the other loop class (replay/menu) is never touched.
+    // NOTE: the guard is negated — `shouldRender()` is true when drawing.
     try_patch(
         &mut text,
         toggles.hidden_frame_skip,
         "hidden-frame-skip",
         "this.Re=window.requestAnimationFrame(M(this,this.sf));this.W.A();",
         "this.Re=window.requestAnimationFrame(M(this,this.sf));\
-         if(__HAXFAST_ENGINE__.shouldRender())return;this.W.A();",
+         if(!__HAXFAST_ENGINE__.shouldRender())return;this.W.A();",
         &mut patches,
     );
 
@@ -439,7 +440,7 @@ mod tests {
         assert!(
             out.contains(
                 "window.requestAnimationFrame(M(this,this.sf));\
-                 if(__HAXFAST_ENGINE__.shouldRender())return;this.W.A();"
+                 if(!__HAXFAST_ENGINE__.shouldRender())return;this.W.A();"
             ),
             "{out}"
         );
