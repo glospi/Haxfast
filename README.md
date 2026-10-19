@@ -7,9 +7,13 @@ a page layer (TypeScript → injected JS) that lives on top of the official site
 
 **F0 closed on 18-10-2026** — [docs/GATE-F0.md](docs/GATE-F0.md) is green: CEF
 loads the official game, HaxFast serves the patched `game-min.js`, the page bridge
-works and real rooms can be played (WebRTC). There are still no product features:
-**F1 (engine performance patches) is the current phase** — see
-[docs/ROADMAP.md](docs/ROADMAP.md).
+works and real rooms can be played (WebRTC).
+
+**F1 closed on 19-10-2026** — [docs/ENGINE.md](docs/ENGINE.md): four fail-open
+performance patches over `game-min.js` (input tolerance 0, cached canvas resize,
+cached stadium layers, skip drawing while hidden), each toggleable live from
+`__HAXFAST_ENGINE__`, plus a disk cache of the original bundle. Current phase:
+**F2 (speed and metrics)** — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Structure
 

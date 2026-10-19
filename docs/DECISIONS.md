@@ -184,3 +184,38 @@ discarded.
 - **Consequence**: TS/JS keeps Allman by hand; Rust stays on the default rustfmt style
   with no `rustfmt.toml` and no nightly dependency. Hand-moving Rust braces into
   Allman is not allowed — the next `cargo fmt` would undo it.
+
+## D19 — Disk cache stores the ORIGINAL bundle, keyed by the deploy URL
+
+`$HAXFAST_HOME/engine/` holds one `<id>.js` (original bytes) + `<id>.json`
+(`{url, hash}`) pair per deploy; the id is a hash of the bundle URL and the hash is
+a content digest computed with std `DefaultHasher` (no new dependency). A hit
+requires both the URL and the recomputed content hash to match.
+
+- **Why**: the bundle URL rotates per deploy and the game must re-download it every
+  start; the deploy resolution stays live (the `/play` page decides), only the 170 KB
+  payload is reused. The patched output is NOT cached: anchors are re-evaluated every
+  startup, so a new HaxFast automatically re-patches the same cached original.
+- **Alternatives**: caching the patched bundle (rejected: it would re-serve stale
+  patches when HaxFast updates); trusting the file without a content hash (rejected:
+  a truncated file would corrupt the game).
+- **Consequence**: corrupt or foreign entries are misses (logged WARN) and the
+  network takes over; deleting the folder is always safe. Deploy rotation leaves
+  orphan pairs behind until the folder is cleaned manually (acceptable at 170 KB).
+
+## D20 — Engine toggles live in preferences and are read by the runtime at call time
+
+The four patch toggles are a new optional `engine` section in `preferences.json`
+(all default ON, old files survive by serde default) and each patched call site
+consults `__HAXFAST_ENGINE__.on(name)` **live**, so `set(name, false)` from the
+console changes the behavior of the running game without a reload.
+
+- **Why**: the user must be able to A/B a patch instantly (it is a performance tweak,
+  and a bad one must be diagnosable in one line) while the startup default stays a
+  plain file the UI of F2 will edit.
+- **Alternatives**: patch-time only (`set` needed a reload) or a runtime object with
+  no persistence — both worse for diagnosis; a server-side default list is not for
+  this project (D5).
+- **Consequence**: a `set()` change is not persisted (next start re-reads
+  `preferences.json`); persistence of user changes is F2 HUD work. The runtime is
+  still injected with all toggles off — the state stays inspectable.
