@@ -60,6 +60,8 @@ pub struct Preferences {
     pub profiles: Vec<Profile>,
     /// F1: engine performance patches (`engine` section, all default ON).
     pub engine: EngineToggles,
+    /// F2: speed/governor and video settings (`video` section).
+    pub video: VideoPrefs,
 }
 
 pub const CURRENT_VERSION: u32 = 1;
@@ -71,6 +73,7 @@ impl Default for Preferences {
             active_profile: Profile::default().id.clone(),
             profiles: vec![Profile::default()],
             engine: EngineToggles::default(),
+            video: VideoPrefs::default(),
         }
     }
 }
@@ -85,6 +88,8 @@ pub struct EngineToggles {
     pub stadium_layer_cache: bool,
     pub zero_input_tolerance: bool,
     pub hidden_frame_skip: bool,
+    /// F2: installs the draw gauger/governor patch (metrics need it too).
+    pub frame_governor: bool,
 }
 
 impl Default for EngineToggles {
@@ -94,7 +99,123 @@ impl Default for EngineToggles {
             stadium_layer_cache: true,
             zero_input_tolerance: true,
             hidden_frame_skip: true,
+            frame_governor: true,
         }
+    }
+}
+
+/// F2 video and governor preferences. Strings are parsed by the accessors so a
+/// hand-edited unknown value falls back to the default instead of invalidating
+/// the whole file (D4 fail-open).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoPrefs {
+    pub governor: String,
+    pub fps_limit: u32,
+    pub show_hud: bool,
+    pub gpu_backend: String,
+}
+
+impl Default for VideoPrefs {
+    fn default() -> Self {
+        Self {
+            governor: "gsync".into(),
+            fps_limit: 144,
+            show_hud: true,
+            gpu_backend: "auto".into(),
+        }
+    }
+}
+
+/// F2 frame-rate governor mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GovernorMode {
+    /// Adaptive: no Chromium flags; vsync / compositor decides.
+    #[default]
+    Gsync,
+    /// Fixed cap applied to render draws by the engine patch.
+    Locked,
+    /// No frame-rate limit flags and no draw cap.
+    Unlimited,
+}
+
+impl GovernorMode {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "gsync" => Some(Self::Gsync),
+            "locked" => Some(Self::Locked),
+            "unlimited" => Some(Self::Unlimited),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gsync => "gsync",
+            Self::Locked => "locked",
+            Self::Unlimited => "unlimited",
+        }
+    }
+
+    /// `locked` and `unlimited` need Chromium's frame-rate limit and vsync off;
+    /// `gsync` leaves the defaults (D8/D21).
+    pub fn needs_frame_rate_flags(self) -> bool {
+        matches!(self, Self::Locked | Self::Unlimited)
+    }
+}
+
+/// F2 GPU backend selector (ANGLE).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GpuBackend {
+    #[default]
+    Auto,
+    Gl,
+    Vulkan,
+}
+
+impl GpuBackend {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            "gl" => Some(Self::Gl),
+            "vulkan" => Some(Self::Vulkan),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Gl => "gl",
+            Self::Vulkan => "vulkan",
+        }
+    }
+
+    /// Value for `--use-angle`; `None` leaves Chromium's default (auto).
+    pub fn angle_value(self) -> Option<&'static str> {
+        match self {
+            Self::Auto => None,
+            Self::Gl => Some("gl"),
+            Self::Vulkan => Some("vulkan"),
+        }
+    }
+}
+
+impl VideoPrefs {
+    /// Unknown strings fall back to the defaults; the host logs the effective
+    /// values at startup.
+    pub fn mode(&self) -> GovernorMode {
+        GovernorMode::parse(&self.governor).unwrap_or_default()
+    }
+
+    pub fn backend(&self) -> GpuBackend {
+        GpuBackend::parse(&self.gpu_backend).unwrap_or_default()
+    }
+
+    /// Effective draw cap. Clamped so a hand-edited file cannot stall the game
+    /// loop; the mode decides whether it is used at all.
+    pub fn draw_cap(&self) -> u32 {
+        self.fps_limit.clamp(10, 1000)
     }
 }
 
@@ -218,6 +339,10 @@ mod tests {
 
         let mut prefs = Preferences::default();
         prefs.profiles[0].player_name = Some("HaxFast".into());
+        prefs.video.governor = "locked".into();
+        prefs.video.fps_limit = 240;
+        prefs.video.show_hud = false;
+        prefs.video.gpu_backend = "vulkan".into();
         prefs.save(&path).unwrap();
 
         let (loaded, warn) = Preferences::load(&path);
@@ -252,6 +377,7 @@ mod tests {
         assert!(toggles.stadium_layer_cache);
         assert!(toggles.zero_input_tolerance);
         assert!(toggles.hidden_frame_skip);
+        assert!(toggles.frame_governor);
 
         // An old file without the `engine` section falls back to all ON.
         let dir = test_dir("prefs-oldnoengine");
@@ -267,5 +393,58 @@ mod tests {
         let (loaded, warn) = Preferences::load(&path);
         assert!(warn.is_none());
         assert_eq!(loaded.engine, EngineToggles::default());
+        assert_eq!(loaded.video, VideoPrefs::default());
+    }
+
+    #[test]
+    fn video_defaults_are_balanced_and_lenient() {
+        let video = Preferences::default().video;
+        assert_eq!(video.mode(), GovernorMode::Gsync);
+        assert_eq!(video.backend(), GpuBackend::Auto);
+        assert_eq!(video.fps_limit, 144);
+        assert!(video.show_hud);
+        assert!(!GovernorMode::Gsync.needs_frame_rate_flags());
+
+        let mut broken = video.clone();
+        broken.governor = "turbo".into();
+        broken.gpu_backend = "metal".into();
+        broken.fps_limit = 1;
+        assert_eq!(broken.mode(), GovernorMode::Gsync);
+        assert_eq!(broken.backend(), GpuBackend::Auto);
+        assert_eq!(broken.draw_cap(), 10);
+        broken.fps_limit = 5000;
+        assert_eq!(broken.draw_cap(), 1000);
+    }
+
+    #[test]
+    fn video_modes_and_backends_parse() {
+        let mut video = VideoPrefs::default();
+        for (raw, mode) in [
+            ("gsync", GovernorMode::Gsync),
+            ("locked", GovernorMode::Locked),
+            ("unlimited", GovernorMode::Unlimited),
+        ] {
+            video.governor = raw.into();
+            assert_eq!(video.mode(), mode);
+        }
+        for (raw, backend) in [
+            ("auto", GpuBackend::Auto),
+            ("gl", GpuBackend::Gl),
+            ("vulkan", GpuBackend::Vulkan),
+        ] {
+            video.gpu_backend = raw.into();
+            assert_eq!(video.backend(), backend);
+            assert_eq!(
+                video.backend().angle_value(),
+                match backend {
+                    GpuBackend::Auto => None,
+                    GpuBackend::Gl => Some("gl"),
+                    GpuBackend::Vulkan => Some("vulkan"),
+                }
+            );
+        }
+        assert!(GovernorMode::Locked.needs_frame_rate_flags());
+        assert!(GovernorMode::Unlimited.needs_frame_rate_flags());
+        assert!(!GovernorMode::Gsync.needs_frame_rate_flags());
     }
 }

@@ -16,13 +16,18 @@ toggles and visible state, cache of the original bundle, and
 honest limits). F0's `/*haxfast:f0*/` marker patch and its anchor were replaced
 by the real pipeline.
 
-## F2 — Speed and metrics
+## F2 — Speed and metrics *(closed 19-10-2026 — shipped)*
 
-FPS governor (gsync/locked/unlimited style modes), minimal HUD (FPS, frame
-p95, patch state, hotkey to hide), real frame time sampling, and
-GPU backend selector (includes `vulkan` via ANGLE, see [VULKAN.md](VULKAN.md)).
-The HUD lives in JS: it measures against `requestAnimationFrame`, which is the only honest
-source.
+Exit criterion met: three persisted governor modes (`gsync` default, `locked`
+10–1000 FPS, `unlimited`), a draw-only cap that leaves simulation/network/input
+alone, a HUD visible at startup with `F8` and persisted settings, real draw
+metrics with a clearly marked rAF fallback, and an ANGLE backend selector that
+shows the renderer actually active. [PERFORMANCE.md](PERFORMANCE.md) has the
+design and the measured results; D21–D24 record the whys.
+
+Honest limits: the cap is a ceiling (10% early tolerance), Vulkan was slower than
+GL on the test machine, the menu/replay loop is not patched (fallback `~`), and
+`F8` is provisional until F5 makes binds configurable.
 
 ## F3 — Shell UI and skins
 

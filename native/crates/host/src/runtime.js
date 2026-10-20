@@ -1,4 +1,4 @@
-// HaxFast engine runtime — injected at the top of `game-min.js` (F1).
+// HaxFast engine runtime — injected at the top of `game-min.js` (F1/F2).
 // Every patched site routes through this object; `on()` is read live, so
 // `__HAXFAST_ENGINE__.set(name, false)` turns a patch off without a reload.
 // Project rule: any failure here must degrade to the vanilla rendering
@@ -159,6 +159,109 @@ globalThis.__HAXFAST_ENGINE__ = (function ()
     state.worldH = worldH;
     T.c.drawImage(tex, regionX, regionY, worldW * 2, worldH * 2);
   };
+
+  // frame-governor: the engine patch calls skipDraw() from the live-view draw
+  // guard, so the cap skips the draw only (simulation, network and input keep
+  // the monitor cadence). frameStats() reports the draws actually made; the HUD
+  // reads them. With the toggle off or no cap this is vanilla + bookkeeping.
+  const DRAW_RING = 256;
+  const DRAW_MAX_MS = 250; // tab resumes and breakpoints are not frame time
+  const drawIntervals = new Float32Array(DRAW_RING);
+  let drawIndex = 0;
+  let drawFilled = 0;
+  let drawCount = 0;
+  let lastDraw = 0;
+
+  const resetDrawMetrics = function ()
+  {
+    drawIndex = 0;
+    drawFilled = 0;
+    drawCount = 0;
+    lastDraw = 0;
+  };
+
+  E.frameLimit = 0;
+  E.setFrameLimit = function (fps)
+  {
+    const value = Number(fps);
+    const next = Number.isFinite(value) && value > 0 ? value : 0;
+    if (next !== E.frameLimit)
+    {
+      E.frameLimit = next;
+      resetDrawMetrics();
+    }
+  };
+
+  E.skipDraw = function (now, nativeBlocked)
+  {
+    try
+    {
+      if (!E.on("frame-governor")) return nativeBlocked;
+      if (nativeBlocked) return true;
+      const interval = E.frameLimit > 0 ? 1000 / E.frameLimit : 0;
+      // 10% early tolerance: without it a 30 fps cap on a 60 Hz display lands on
+      // 20/30 fps alternately because of timestamp jitter around the interval.
+      if (interval > 0 && now - lastDraw < interval * 0.9) return true;
+      if (lastDraw > 0)
+      {
+        const delta = now - lastDraw;
+        if (delta > 0 && delta < DRAW_MAX_MS)
+        {
+          drawIntervals[drawIndex] = delta;
+          drawIndex = (drawIndex + 1) % DRAW_RING;
+          if (drawFilled < DRAW_RING) drawFilled++;
+        }
+      }
+      lastDraw = now;
+      drawCount++;
+      return false;
+    }
+    catch (e)
+    {
+      return nativeBlocked; // fail-open: the vanilla decision
+    }
+  };
+
+  E.frameStats = function ()
+  {
+    try
+    {
+      // The replay/menu loop does not call skipDraw: stale counters would
+      // otherwise freeze the HUD.
+      const stale = lastDraw > 0 && performance.now() - lastDraw > 500;
+      let sum = 0;
+      for (let i = 0; i < drawFilled; i++) sum += drawIntervals[i];
+      const mean = drawFilled > 0 ? sum / drawFilled : 0;
+      let p95 = 0;
+      if (drawFilled > 0)
+      {
+        const sorted = Array.from(drawIntervals.subarray(0, drawFilled)).sort(function (a, b)
+        {
+          return a - b;
+        });
+        const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(0.95 * sorted.length) - 1));
+        p95 = sorted[index];
+      }
+      return {
+        fps: !stale && mean > 0 ? 1000 / mean : 0,
+        p95: stale ? 0 : p95,
+        samples: stale ? 0 : drawFilled,
+        draws: drawCount,
+        limit: E.frameLimit,
+      };
+    }
+    catch (e)
+    {
+      return { fps: 0, p95: 0, samples: 0, draws: drawCount, limit: E.frameLimit };
+    }
+  };
+
+  // Hidden pages stop drawing while rAF keeps its schedule; reset so the
+  // resume delta does not poison FPS or p95.
+  document.addEventListener("visibilitychange", function ()
+  {
+    if (document.visibilityState === "hidden") resetDrawMetrics();
+  });
 
   return E;
 })();

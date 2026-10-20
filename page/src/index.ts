@@ -1,43 +1,182 @@
-// HaxFast — page layer (injected into the game page).
-// F0: minimal bootstrap: connect the bridge, read prefs and sample raw FPS for the gate.
-import { bridge } from "./bridge";
+// HaxFast — page layer (injected into the top frame).
+// F2: frame metrics, the FPS governor and the HUD over the official page.
+// Fail-open: any error here leaves the official client exactly as it was.
 
-const log = (msg: string, data?: unknown) => bridge.notify("log", { msg, data });
+import { bridge } from "./bridge";
+import { engineOf, findGameFrame, type GameFrame } from "./game";
+import { applyGovernor } from "./governor";
+import { Hud, installHotkey } from "./hud";
+import { RafSampler, selftest, snapshotOf } from "./metrics";
+import { asGovernor, clampFps, type EngineRuntime, type Preferences, type VideoPrefs } from "./types";
+
+const log = (msg: string, data?: unknown): void => bridge.notify("log", { msg, data });
+const TICK_MS = 250;
+const METRICS_LOG_MS = 5000;
+
+declare global
+{
+  interface Window
+  {
+    __HF_SELFTEST__?: () => string[];
+  }
+}
 
 async function main(): Promise<void>
 {
-  if (window !== window.top) return; // F0: top frame only; the game iframe arrives in F1/F2
+  if (window !== window.top) return; // top frame only (D14)
 
-  await bridge.connect();
-  log("page bootstrap", { href: location.href });
+  const connected = await bridge.connect();
+  log("page bootstrap", { href: location.href, connected });
 
-  const prefs = (await bridge.call("prefs.get")) as { profiles?: unknown[] } | undefined;
-  log("prefs received", { profiles: prefs?.profiles?.length ?? 0 });
+  const prefs = normalize((await bridge.call("prefs.get")) as Preferences | undefined);
+  log("prefs received", { profiles: prefs.profiles.length, governor: prefs.video.governor });
 
-  sampleFps(5000);
-}
+  const sampler = new RafSampler();
+  let game: GameFrame | undefined;
+  let runtime: EngineRuntime | undefined;
+  let appliedTo: EngineRuntime | undefined;
+  let lastLogAt = 0;
 
-// Raw FPS sampling: with the unlocked frame-rate flags it should exceed 60;
-// it is the simplest signal to know whether the switches made it through CEF.
-function sampleFps(ms: number): void
-{
-  let frames = 0;
-  const start = performance.now();
-  const tick = (): void =>
+  const save = (): void =>
   {
-    frames++;
-    const elapsed = performance.now() - start;
-    if (elapsed < ms)
-    {
-      requestAnimationFrame(tick);
-    }
-    else
-    {
-      const fps = Math.round(((frames * 1000) / elapsed) * 10) / 10;
-      log("fps sample", { fps, seconds: Math.round(elapsed / 100) / 10 });
-    }
+    void bridge.call("prefs.set", prefs).catch((error: unknown) => log("prefs save failed", String(error)));
   };
-  requestAnimationFrame(tick);
+
+  const hud = new Hud(prefs, {
+    engine: () => runtime,
+    onVideo: (video) =>
+    {
+      applyGovernor(runtime, asGovernor(video.governor), video.fps_limit, log);
+      save();
+    },
+    onEngineToggle: (name, value) =>
+    {
+      runtime?.set(name, value);
+      save();
+    },
+  });
+  hud.setVisible(prefs.video.show_hud);
+  installHotkey(hud, document);
+
+  window.__HF_SELFTEST__ = selftest;
+  if (location.hash.includes("selftest"))
+  {
+    const failures = selftest();
+    log("selftest", { failures: failures.length, detail: failures });
+  }
+
+  window.setInterval(() =>
+  {
+    try
+    {
+      const frame = findGameFrame();
+      if (!frame)
+      {
+        if (game)
+        {
+          game = undefined;
+          runtime = undefined;
+          appliedTo = undefined;
+          sampler.detach();
+        }
+      }
+      else
+      {
+        // The WindowProxy survives iframe navigations; the document does not.
+        if (frame.window !== game?.window || frame.document !== game?.document)
+        {
+          sampler.detach();
+          installHotkey(hud, frame.document);
+          sampler.attach(frame.window);
+        }
+        game = frame;
+        runtime = engineOf(frame);
+      }
+
+      if (runtime && runtime !== appliedTo)
+      {
+        appliedTo = runtime;
+        applyGovernor(runtime, asGovernor(prefs.video.governor), prefs.video.fps_limit, log);
+      }
+
+      const snapshot = snapshotOf(runtime, sampler);
+      const mode = asGovernor(prefs.video.governor);
+      const limit = mode === "locked" ? clampFps(prefs.video.fps_limit) : 0;
+      const cap = runtime?.frameLimit ?? 0;
+      const native30 = nativeFpsLimit(game);
+
+      hud.render({ ...snapshot, mode, limit, cap, native30 });
+
+      const now = performance.now();
+      if (now - lastLogAt >= METRICS_LOG_MS)
+      {
+        lastLogAt = now;
+        bridge.notify("metrics.frame", {
+          fps: round1(snapshot.fps),
+          p95: round1(snapshot.p95),
+          samples: snapshot.samples,
+          source: snapshot.source,
+          mode,
+          limit,
+          cap,
+          gpu: hud.renderer,
+          patches: runtime?.patches ?? [],
+          native30,
+        });
+      }
+    }
+    catch (error)
+    {
+      console.warn("[haxfast] hud tick failed", error);
+    }
+  }, TICK_MS);
 }
 
-void main();
+function normalize(raw: Preferences | undefined): Preferences
+{
+  const defaults: Preferences = {
+    version: 1,
+    active_profile: "default",
+    profiles: [],
+    engine: {
+      canvas_resize_cache: true,
+      stadium_layer_cache: true,
+      zero_input_tolerance: true,
+      hidden_frame_skip: true,
+      frame_governor: true,
+    },
+    video: { governor: "gsync", fps_limit: 144, show_hud: true, gpu_backend: "auto" },
+  };
+  if (!raw) return defaults;
+  const video: VideoPrefs = { ...defaults.video, ...(raw.video ?? {}) };
+  video.fps_limit = clampFps(video.fps_limit);
+  return {
+    ...defaults,
+    ...raw,
+    engine: { ...defaults.engine, ...(raw.engine ?? {}) },
+    video,
+  };
+}
+
+function nativeFpsLimit(game: GameFrame | undefined): boolean
+{
+  try
+  {
+    return game?.window.localStorage.getItem("fps_limit") === "1";
+  }
+  catch
+  {
+    return false;
+  }
+}
+
+function round1(value: number): number
+{
+  return Math.round(value * 10) / 10;
+}
+
+void main().catch((error: unknown) =>
+{
+  console.error("[haxfast] page init failed", error);
+  log("page init failed", String(error));
+});

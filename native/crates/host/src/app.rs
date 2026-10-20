@@ -10,6 +10,7 @@ use crate::bridge::BridgeInfo;
 use crate::engine::{self, Engine};
 use crate::log;
 use crate::paths;
+use haxfast_core::prefs::{GovernorMode, VideoPrefs};
 
 /// Official game page (or `$HAXFAST_URL` for tests).
 pub const GAME_URL: &str = "https://www.haxball.com/play";
@@ -23,6 +24,8 @@ pub struct HostState {
     pub bridge: BridgeInfo,
     pub engine: Option<Engine>,
     pub page_url: String,
+    /// F2 startup choices (flags cannot change while running).
+    pub video: VideoPrefs,
     /// Live browsers: the app closes when the last one closes.
     pub browsers: AtomicUsize,
 }
@@ -61,11 +64,31 @@ wrap_app! {
             if !is_browser_process {
                 return;
             }
-            // Performance: no frame-rate limit and no vsync (the same flags the
-            // HaxBall ecosystem uses in Electron). Verified with the HUD in F2.
-            command_line.append_switch(Some(&CefString::from("disable-frame-rate-limit")));
-            command_line.append_switch(Some(&CefString::from("disable-gpu-vsync")));
-            log::info("cef: startup flags added (frame-rate)");
+            // F2: gsync keeps Chromium's defaults; locked/unlimited disable the
+            // frame-rate limit and vsync. The draw cap itself is applied live by
+            // the page (D21/D22).
+            let video = state().video.clone();
+            let mode = video.mode();
+            if mode.needs_frame_rate_flags() {
+                command_line.append_switch(Some(&CefString::from("disable-frame-rate-limit")));
+                command_line.append_switch(Some(&CefString::from("disable-gpu-vsync")));
+            }
+            if let Some(angle) = video.backend().angle_value() {
+                command_line.append_switch_with_value(
+                    Some(&CefString::from("use-angle")),
+                    Some(&CefString::from(angle)),
+                );
+            }
+            let limit = match mode {
+                GovernorMode::Locked => format!("{} fps", video.draw_cap()),
+                _ => "no cap".to_string(),
+            };
+            log::info(&format!(
+                "cef: startup flags (governor {}, {}, gpu {})",
+                mode.as_str(),
+                limit,
+                video.backend().as_str()
+            ));
         }
     }
 }

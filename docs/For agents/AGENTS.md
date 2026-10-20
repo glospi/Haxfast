@@ -17,6 +17,8 @@ Rules that are not negotiable:
   fails, the intact official `game-min.js` is served and logged. Never break to "improve".
 - **Speed first**, but without rewriting for fun: don't move more data than needed.
   Hot paths (per frame) in JS inside the page; logic and state (per event) in Rust.
+- **The frame cap is draw-only**: never slow simulation, network or input to hit an
+  FPS target (D22).
 - **In v1 Rust does not intercept WebRTC, signaling or the protocol.** That is touched
   only in the native track (R).
 - One **anchor per patch**: if the text is not there, that patch is not applied (there
@@ -37,15 +39,23 @@ Rules that are not negotiable:
 - Items 1–6 ✔: host starts with a single window (ALLOY, no Chrome UI), loads
   `https://www.haxball.com/play`, serves the patched `game-min.js`, the game reaches the
   main menu, the bridge responds (`prefs.set`/`prefs.get`) and the frame-rate flags
-  reach CEF.
+  reach CEF (F0 added them unconditionally; F2 made it a governor mode, D21).
 - Items 7–10 ✔ (manual, real room, confirmed by the user): joining and playing,
   reCAPTCHA, audio and fullscreen. The logs of that session show no WebRTC/STUN or
   console errors.
-- **Current phase: F2** (speed and metrics). F1 closed on 19-10-2026: the four engine
-  patches, the runtime `__HAXFAST_ENGINE__` (toggles + state) and the disk cache of
-  the original bundle are live and verified. Two bugs found in live play were fixed
-  before closing (inverted hidden-frame guard, stadium bake coverage) — details and
-  anchors in [../ENGINE.md](../ENGINE.md). engine.rs no longer emits the F0 marker.
+- **F1 closed on 19-10-2026** — [../ENGINE.md](../ENGINE.md): four fail-open patches
+  over `game-min.js` (input tolerance 0, cached canvas resize, cached stadium
+  layers, hidden-frame skip), the `__HAXFAST_ENGINE__` runtime with live toggles and
+  the original-bundle disk cache. Two live-found bugs fixed before closing (inverted
+  hidden-frame guard, stadium bake coverage).
+- **F2 closed on 19-10-2026** — [../PERFORMANCE.md](../PERFORMANCE.md): persisted
+  governor (`gsync` default, `locked` with a live draw cap, `unlimited`), HUD visible
+  at startup (`F8`, settings panel), real draw metrics + p95 with a marked rAF
+  fallback, ANGLE backend selector showing the actual renderer, measured GL/Vulkan.
+  The engine patch is `frame-governor` ([../ENGINE.md](../ENGINE.md)); D21–D24.
+  Honest limits: the cap is a ceiling (10% tolerance), Vulkan was slower on the test
+  machine, the menu/replay loop is not patched, `F8` is provisional until F5.
+- **Current phase: F3** (shell UI and skins), not started.
 
 ## 3. Repo map
 
@@ -55,7 +65,9 @@ native/crates/host     CEF binary: main (startup/preload), app (handlers, window
                        injection), engine (bundle download, patching, disk cache),
                        runtime.js (injected engine runtime), bridge (WS), paths, log.
 page/src               Page layer (TS → dist/page.js): bridge.ts (only channel to the
-                       host), index.ts (bootstrap). Built with esbuild.
+                       host), index.ts (bootstrap + tick), hud.ts (overlay, panel,
+                       F8), metrics.ts (rAF fallback + selftest), governor.ts (apply/
+                       persist caps), game.ts (iframe access), types.ts (shared).
 build/build.mjs        Page build (esbuild, --watch in dev).
 docs/                  Normative documentation.
 docs/reference-me/        REA reports: historical material, local only (git-ignored).
@@ -70,7 +82,7 @@ npm install
 npm run build:page                 # dist/page.js (re-read on every load: rebuild + F5 is enough)
 cargo build --manifest-path native/Cargo.toml -p haxfast-host
 ./native/target/debug/haxfast-host
-cargo test --manifest-path native/Cargo.toml   # core (7) + host (12)
+cargo test --manifest-path native/Cargo.toml   # core (9) + host (13)
 npm run check:page                             # tsc --noEmit
 ```
 
@@ -99,12 +111,12 @@ tail -f /tmp/opencode/haxfast-fresh/logs/haxfast.log
 Log signals (all must appear):
 
 ```
-cef: startup flags added (frame-rate)
-engine: game-min.js ready (... bytes (download|disk cache), patches: runtime, zero-input-tolerance, canvas-resize-cache, stadium-layer-cache, hidden-frame-skip)
+cef: startup flags (governor gsync, no cap, gpu auto)
+engine: game-min.js ready (... bytes (download|disk cache), patches: runtime, zero-input-tolerance, canvas-resize-cache, stadium-layer-cache, hidden-frame-skip, frame-governor)
 engine: intercepted https://.../game-min.js
 page: loaded https://www.haxball.com/play (HTTP 200)
 page: bundle injected (dist/page.js)
-[page] page bootstrap / prefs received / fps sample
+[page] page bootstrap / prefs received / frame {"fps":...,"p95":...,"samples":...,"source":"engine",...}
 ```
 
 A patch missing its anchor logs `engine: <name> skipped: anchor not found (fail-open)`
@@ -118,10 +130,19 @@ const f = [...document.querySelectorAll("iframe")].find((i) => (i.src || "").inc
 JSON.stringify({
   gameFrame: f?.src,
   engine: f?.contentWindow.__HAXFAST_ENGINE__,     // { version, patches } = patched bundle running
+  frames: f?.contentWindow.__HAXFAST_ENGINE__?.frameStats?.(), // real draws: {fps,p95,samples,draws,limit}
   dialog: f?.contentDocument.querySelector(".dialog h1")?.textContent, // "Choose nickname" = it started
   bridge: await window.__HF_BRIDGE__.call("prefs.get"), // the host answers
+  hud: document.querySelector("#haxfast-hud")?.children[0]?.textContent, // line + "~" fallback
+  selftest: window.__HF_SELFTEST__?.(),            // [] = metrics/clamp checks pass
 });
 ```
+
+The HUD starts visible and `F8` hides/shows it (`video.show_hud` is persisted).
+The line starts with `~` when it is the rAF fallback (menu, replay, room list,
+where the live loop is not drawing); without it, the numbers come from actual
+draws. A pending mode/backend change shows `restart to apply` in the panel.
+`metrics.frame` is the bridge method (not `metrics.fps`).
 
 And to see the bytes actually served (they must carry `__HAXFAST_ENGINE__` and the
 patch sites, e.g. `__HAXFAST_ENGINE__.stadium(this,h,c.U)`):
@@ -155,10 +176,24 @@ they are worth versioning.
 - To kill old instances: by **process group** (`kill -9 -$(ps -o pgid= -p PID)`).
   **Never `pkill -f haxfast-host`**: it kills the agent's own shell. Watch out for
   other client processes of the user: don't touch them.
-- The measured frame rate depends on the environment: with the monitor active the
-  desktop compositor caps it at ~58-60 fps (also in `about:blank`), and with this same
-  build 2296 fps were measured. It is the environment, not the game or the flags; the
-  real unlock is F2.
+- The measured frame rate depends on the environment: with the monitor active and
+  `gsync`, the compositor caps at ~60 fps regardless of the client. `unlimited` in
+  the same machine measured 292–332 fps, scene-dependent; never compare numbers from
+  a menu/room list (the live loop is not drawing and the HUD shows the rAF fallback
+  `~`).
+- **The game's own FPS Limit wins.** If `localStorage.fps_limit` is `1` (game menu →
+  Settings → Video → FPS Limit = 30), the engine skips draws before the governor; the
+  HUD appends `native 30` and F2 never writes that setting. Turn it to “None” before
+  measuring a governor mode, and apply changes from the game's settings UI (a stored
+  value alone is not read until the game reloads).
+- **A top-page reload can be blocked by the game iframe's `beforeunload`**, leaving
+  the old game document (and its old settings) alive behind a fresh top page. The page
+  layer re-detects the iframe by `contentDocument` (the WindowProxy survives
+  navigations) and reattaches the sampler/hotkey; for tests, change the game setting
+  in its UI, or clear `contentWindow.onbeforeunload` before reloading the iframe.
+- **The cap is a ceiling.** The 10% early tolerance is deliberate (D22); a 30 target
+  measures ~32.5 fps and 144 measures ~140, not exact values. Don't "fix" that by
+  removing the tolerance: without it a 30 target alternating 20/30 is worse.
 
 ## 8. Work cycle
 
@@ -169,7 +204,8 @@ they are worth versioning.
 - Every new decision (or reversal) is written down in `docs/DECISIONS.md` with the
   existing format: decision, why, alternatives, consequence.
 - Scope or product changes are discussed with the user before coding.
-- Finishing a phase's work includes its document (e.g. `docs/ENGINE.md` in F1).
+- Finishing a phase's work includes its document (e.g. `docs/ENGINE.md` in F1,
+  `docs/PERFORMANCE.md` in F2).
 - Braces: the page layer (TS/JS) is Allman, kept by hand; there is no formatter there.
   Rust keeps the default rustfmt style (D18): the Allman option is nightly-only and
   covers item braces only, so it was discarded — never hand-move Rust braces into
@@ -177,15 +213,13 @@ they are worth versioning.
 
 ## 9. Next step
 
-**F2 — speed and metrics** (details and exit criterion in
-[../ROADMAP.md](../ROADMAP.md)): FPS governor (gsync/locked/unlimited style modes),
-minimal HUD (FPS, p95, patch state, hide hotkey), real frame time sampling, GPU
-backend selector. The F1 engine state (`__HAXFAST_ENGINE__.patches/toggles`) is what
-the HUD shows, and HUD code is where `set()` gets a persistent UI.
-
-Plus: disk cache of the original bundle (hash + `userData/engine/`) and `docs/ENGINE.md`.
-Before writing patches, verify each anchor against the real downloaded bundle
-(not against memory or an old deploy).
+**F3 — shell UI and skins** (details and exit criterion in
+[../ROADMAP.md](../ROADMAP.md)): mount our own UI in the top frame (the bridge and
+the HUD already live there), CSS-only skins, external links to the system browser,
+and the ads/official-navbar decisions. F2 is closed: read
+[../PERFORMANCE.md](../PERFORMANCE.md) and D21–D24 before touching the HUD or the
+governor. Before writing engine anchors, verify each one against the real downloaded
+bundle (not against memory or an old deploy).
 
 ## 10. Per-phase dossier
 
@@ -214,20 +248,24 @@ machine; if they are missing, ask the user for them. The extension is not vendor
   against the live bundle).
 - Known risks for F2+: the stadium bake is the only patch with real graphics logic —
   if a future stadium type ever renders wrong, the toggle `stadium-layer-cache`
-  isolates it; `set()` changes are not persisted yet (F2 HUD work).
+  isolates it. `set()` changes are persisted by the F2 HUD (D23).
 
-### F2 — Speed and metrics
+### F2 — Speed and metrics *(closed 19-10-2026)*
 
-- Already decided: the HUD and the governor live in JS and measure against
-  `requestAnimationFrame` (ARCHITECTURE §Performance rules); Vulkan only as an ANGLE
-  backend (VULKAN.md); the ~60 fps cap with the monitor active comes from the desktop
-  compositor, not from the client (GATE-F0 notes).
-- Material: `reference-me/REA-pure-client-report.md §3` (graphics backend, FPS and video,
-  minimum latency mode, canvas options) and `VULKAN.md`.
-- Questions: default governor mode; whether the HUD starts visible; whether switching
-  the GPU backend requires a restart.
-- First move: measure the frame time of the **game iframe** (not the top frame) and
-  compare modes before touching the engine.
+- Shipped: `video` prefs (`governor`, `fps_limit`, `show_hud`, `gpu_backend`) with
+  lenient parsing; startup flags in `app.rs`; the `frame-governor` text patch in
+  `engine.rs` (live-view draw guard) and the runtime's `setFrameLimit`/`skipDraw`/
+  `frameStats`; the top-frame HUD/panel/hotkey and the governor control in `page/`;
+  `metrics.frame` in the bridge; [../PERFORMANCE.md](../PERFORMANCE.md) with design,
+  verification and measured results. Decisions D21–D24.
+- Answers: default `gsync`; HUD visible at startup; mode and backend need a restart;
+  `locked` default 144 (10–1000); the game's native 30 wins; F8 is provisional.
+- Material: `reference-me/REA-pure-client-report.md §3` (graphics backend, FPS/video,
+  minimum latency mode, canvas options), `VULKAN.md`, the live bundle guard.
+- Known limits: the cap is a ceiling (10% tolerance, measured 32.5 for 30 and 140 for
+  144); Vulkan was slower than GL on the test machine; the menu/replay loop is not
+  patched (HUD `~`); F8 becomes configurable in F5. There is no TS test framework:
+  `npm run check:page`, `__HF_SELFTEST__`, `frameStats()` and CDP are the checks.
 
 ### F3 — Shell UI and skins
 

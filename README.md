@@ -12,8 +12,14 @@ works and real rooms can be played (WebRTC).
 **F1 closed on 19-10-2026** — [docs/ENGINE.md](docs/ENGINE.md): four fail-open
 performance patches over `game-min.js` (input tolerance 0, cached canvas resize,
 cached stadium layers, skip drawing while hidden), each toggleable live from
-`__HAXFAST_ENGINE__`, plus a disk cache of the original bundle. Current phase:
-**F2 (speed and metrics)** — see [docs/ROADMAP.md](docs/ROADMAP.md).
+`__HAXFAST_ENGINE__`, plus a disk cache of the original bundle.
+
+**F2 closed on 19-10-2026** — [docs/PERFORMANCE.md](docs/PERFORMANCE.md): frame-rate
+governor (`gsync` default, `locked` with a live draw cap, `unlimited`), a HUD with
+real draw metrics and p95 (`F8` toggles it), persistent video/engine settings and an
+ANGLE backend selector with the actual renderer shown. The cap skips draws only;
+simulation, network and input keep their cadence. Current phase: **F3 (shell UI and
+skins)** — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Structure
 
@@ -52,6 +58,8 @@ Useful variables:
 
 - [docs/README.md](docs/README.md) — index.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the client is put together.
+- [docs/ENGINE.md](docs/ENGINE.md) — game-min.js patches, runtime and toggles.
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — governor, HUD, metrics, measured results.
 - [docs/DECISIONS.md](docs/DECISIONS.md) — decision log and whys.
 - [docs/ROADMAP.md](docs/ROADMAP.md) — phases F0–F9 and native track.
 - [docs/For agents/AGENTS.md](docs/For%20agents/AGENTS.md) — operating guide for agents working on the repo.

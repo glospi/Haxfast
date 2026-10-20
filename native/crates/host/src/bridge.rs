@@ -1,7 +1,7 @@
 //! Page ↔ host bridge: local WebSocket on 127.0.0.1 with an ephemeral port and token.
 //! The host injects the address into the page (`window.__HAXFAST_BOOT`).
 //!
-//! Methods: `hello`, `prefs.get`, `prefs.set`, `log`, `metrics.fps`.
+//! Methods: `hello`, `prefs.get`, `prefs.set`, `log`, `metrics.frame`.
 
 use std::io::Read as _;
 use std::net::{TcpListener, TcpStream};
@@ -128,8 +128,8 @@ fn dispatch(method: &str, params: serde_json::Value) -> Result<serde_json::Value
             Ok(serde_json::Value::Null)
         }
 
-        "metrics.fps" => {
-            log::info(&format!("[page] fps {params}"));
+        "metrics.frame" => {
+            log::info(&format!("[page] frame {params}"));
             Ok(serde_json::Value::Null)
         }
 

@@ -1,4 +1,4 @@
-# Engine (F1)
+# Engine patches (F1–F2)
 
 How the bundle served to the browser differs from the official `game-min.js`, and
 how to control it. Reference for the patch-by-patch behavior: it is the document
@@ -27,21 +27,24 @@ injected right after `'use strict'`; the file never leaves strict mode):
 ```
 globalThis.__HAXFAST_ENGINE__ = {
   version, patches: [...applied names...], toggles: { 'canvas-resize-cache': true, ... },
-  on(name), set(name, value), rect(canvas), stadium(T, zoom, stadium), shouldRender()
+  on(name), set(name, value), rect(canvas), stadium(T, zoom, stadium), shouldRender(),
+  frameLimit, setFrameLimit(fps), skipDraw(now, nativeBlocked), frameStats()
 }
 ```
 
 Every patch routes through `on()`, read **live**: `set('stadium-layer-cache', false)`
 from the console takes effect the next frame, no reload. The toggles are seeded
 from `preferences.json` (section `engine`, all default ON) at startup; changing the
-file needs a restart, `set()` does not survive it (UI and persistence of changes
-arrive in F2).
+file needs a restart, `set()` does not survive it. The F2 HUD persists the toggles
+and the video options (D23).
 
 Useful from devtools or CDP:
 
 ```js
 __HAXFAST_ENGINE__.patches          // what got applied this startup
 __HAXFAST_ENGINE__.set('hidden-frame-skip', false)
+__HAXFAST_ENGINE__.frameStats()     // {fps, p95, samples, draws, limit}
+__HAXFAST_ENGINE__.setFrameLimit(144)
 ```
 
 ## Patches
@@ -94,6 +97,32 @@ __HAXFAST_ENGINE__.set('hidden-frame-skip', false)
   a tab is hidden, so nothing new. `shouldRender()` = toggle on AND
   `document.visibilityState === "visible"`.
 
+### frame-governor
+
+- Anchor: `Rc(){var a=window.performance.now();1==m.j.Qh.v()&&28.333333333333336>a-this.hd||`
+  (the live-view draw guard in `Da.Rc`). Replacement: the guard's decision becomes
+  `__HAXFAST_ENGINE__.skipDraw(a,1==m.j.Qh.v()&&28.333333333333336>a-this.hd)||`;
+  returning `false` lets the original `this.hd=a;this.Bd++` and the rest of `Rc`
+  run unchanged.
+- `skipDraw(now, nativeBlocked)`:
+  - toggle off or exception → `nativeBlocked` (exactly vanilla);
+  - native limit active → `true` (the game's own setting is never changed);
+  - `frameLimit > 0` and `now - lastDraw < (1000 / frameLimit) * 0.9` → `true`;
+  - otherwise it records the interval, updates the counters and returns `false`.
+- The **10% early tolerance** stops a 30 target on a 60 Hz loop from alternating
+  20/30 because of timestamp jitter around the interval. The cap is a ceiling: the
+  average can exceed the target slightly (measured 32.5 for 30 and 140 for 144;
+  D22).
+- `frameLimit` is set by the page governor through `setFrameLimit` (0 = no cap); a
+  change resets the metrics. With no cap the patch is inert bookkeeping, so
+  `gsync` runs the vanilla draw path.
+- `frameStats()` reports the draws actually made over the last 256 intervals and
+  goes to 0 samples after 500 ms without a draw. That keeps the HUD from freezing
+  on the replay/menu loop, which has a different anchor and is not patched; the
+  page's rAF fallback marks its numbers with `~` (D24).
+- Fail-open: anchor missing → no replacement (vanilla); toggle off or any
+  exception → vanilla behavior for that call.
+
 ## Disk cache of the original bundle
 
 `$HAXFAST_HOME/engine/` (never the patched bytes): every deploy gets two files,
@@ -108,8 +137,10 @@ pair of files per deploy.
 
 | What | Where |
 | --- | --- |
-| Patch toggles (persisted) | `preferences.json` → `engine.{canvas_resize_cache, stadium_layer_cache, zero_input_tolerance, hidden_frame_skip}` (snake_case; old files default to all ON) |
+| Patch toggles (persisted) | `preferences.json` → `engine.{canvas_resize_cache, stadium_layer_cache, zero_input_tolerance, hidden_frame_skip, frame_governor}` (snake_case; old files default to all ON) |
 | Patch toggles (live, not persisted) | `__HAXFAST_ENGINE__.set(...)` |
+| Video/governor options (persisted) | `preferences.json` → `video.{governor, fps_limit, show_hud, gpu_backend}` (written by the HUD) |
+| Live draw cap | `__HAXFAST_ENGINE__.setFrameLimit(fps)` or the HUD panel |
 | Skip a patch forever | its anchor is gone (fail-open), or set its toggle |
 
 ## Verification
@@ -130,3 +161,17 @@ fail-open, toggles off, cache round-trip and corruption). The live recipe is in
   reuse window, which could leave up to 280 px of the left edge with the previous
   frame after panning left. The bake now blits only while the transformed visible
   rect (HUD offset included) is fully inside the baked region.
+
+The F2 session (19-10-2026) checked:
+
+- the runtime plus five patches on the same 173 175 B bundle (`… hidden-frame-skip, frame-governor`);
+  `cargo test` covers the new anchor, toggle-off and missing-anchor fail-open
+  (9 core + 13 host tests);
+- live A/B of `frame-governor`: off → vanilla/native behavior; on with a cap →
+  draws are skipped; `frameStats()` reports draws and goes to 0 samples in the
+  menu/replay loop;
+- `locked 30/144`, `unlimited`, the game's native 30 limit and the GL/Vulkan ANGLE
+  backends; `window.__HF_SELFTEST__()` returned `[]`; numbers and scenes are in
+  [PERFORMANCE.md](PERFORMANCE.md);
+- `F8` hide/show with `show_hud` persistence, live limit changes, engine toggle
+  persistence and the restart note for mode/backend.

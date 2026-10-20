@@ -8,6 +8,7 @@ mod log;
 mod paths;
 
 use cef::*;
+use haxfast_core::prefs::{GpuBackend, GovernorMode};
 
 fn main() {
     ensure_libcef_preloaded();
@@ -143,6 +144,26 @@ fn init_runtime() -> app::HostState {
     if let Some(warning) = prefs_warning {
         log::warn(&format!("prefs: {warning}"));
     }
+    if GovernorMode::parse(&prefs.video.governor).is_none() {
+        log::warn(&format!(
+            "prefs: unknown governor '{}' (using gsync)",
+            prefs.video.governor
+        ));
+    }
+    if GpuBackend::parse(&prefs.video.gpu_backend).is_none() {
+        log::warn(&format!(
+            "prefs: unknown gpu_backend '{}' (using auto)",
+            prefs.video.gpu_backend
+        ));
+    }
+    if prefs.video.fps_limit != prefs.video.draw_cap() {
+        log::warn(&format!(
+            "prefs: fps_limit {} out of range (using {})",
+            prefs.video.fps_limit,
+            prefs.video.draw_cap()
+        ));
+    }
+    let video = prefs.video.clone();
 
     let engine = match engine::Engine::prepare(&requested_url, &prefs.engine, &paths::engine_dir())
     {
@@ -164,6 +185,7 @@ fn init_runtime() -> app::HostState {
         bridge,
         engine,
         page_url,
+        video,
         browsers: std::sync::atomic::AtomicUsize::new(0),
     }
 }

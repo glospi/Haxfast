@@ -219,3 +219,95 @@ console changes the behavior of the running game without a reload.
 - **Consequence**: a `set()` change is not persisted (next start re-reads
   `preferences.json`); persistence of user changes is F2 HUD work. The runtime is
   still injected with all toggles off — the state stays inspectable.
+
+## D21 — Governor: `gsync` by default; `locked`/`unlimited` unlock Chromium
+
+`video.governor` is `gsync` (default), `locked` or `unlimited`; the mode and the
+GPU backend are startup choices. `locked`/`unlimited` add
+`--disable-frame-rate-limit` and `--disable-gpu-vsync`; `gsync` leaves Chromium's
+defaults. `locked` also asks the engine runtime for a draw cap (`video.fps_limit`,
+10–1000, default 144); `unlimited` has no cap. The HUD shows a restart note when
+the mode or backend changes.
+
+- **Why**: `gsync` is the balanced default and the path the official client uses;
+  unlocking without a cap (the old ecosystem recipe) spends GPU and heat for no
+  benefit, while a cap without the flags cannot go above the compositor's ~60.
+  The two knobs together are the smallest set that gives all three behaviors.
+- **Alternatives**: flags only (no control), cap only (not a real unlock), default
+  `unlimited` (waste on laptops) or default `locked` (arbitrary target before the
+  user chooses one).
+- **Consequence**: switching mode/backend needs a restart; the HUD and the log
+  say so. The strings are parsed leniently (unknown → default) so a hand-edited
+  file never invalidates the profile; the host logs the effective flags at
+  startup. The cap itself is live (D22).
+
+## D22 — The frame cap skips draws only, never simulation, network or input
+
+The F2 `frame-governor` patch routes the live-view draw guard through
+`__HAXFAST_ENGINE__.skipDraw(now, nativeBlocked)`. It returns `true` only when the
+draw must be skipped: the game's native FPS Limit (`nativeBlocked`, passed
+through untouched) or the governor's interval minus a 10% early tolerance. Every
+other line of the loop (simulation, network, input, scheduling) still runs at the
+monitor cadence. The toggle off, a missing anchor or an exception returns
+`nativeBlocked`, exactly vanilla.
+
+- **Why**: slowing simulation would change the match and the netcode; the goal is
+  frame pacing and GPU cost. The game's own 30 FPS Limit already works this way,
+  so reusing the same guard is both minimal and predictable.
+- **Alternatives**: throttling the whole rAF loop (slows simulation), patching the
+  renderer entry (more anchors, more risk), trusting `--disable-gpu-vsync` alone
+  (no cap), a host-side timer (cannot reach the draw safely).
+- **Consequence**: the game's own FPS counter and our metric both count draws; a
+  30 cap does not slow the match clock. The replay/menu loop has a different
+  anchor and stays untouched, so the HUD falls back there. The 10% tolerance
+  makes the cap a **ceiling**: without it, 30 fps on a 60 Hz loop alternated
+  20/30 because of timestamp jitter; with it, the average can exceed the target
+  slightly (measured 32.5 for a 30 target, 140 for 144).
+
+## D23 — HUD lives in the top frame, is visible at startup and persists its settings
+
+`page/src/hud.ts` renders a bottom-right overlay in the **top** frame (the bridge
+and the future shell live there, D14); it reads the game only through
+`contentWindow.__HAXFAST_ENGINE__`. `video.show_hud` defaults to `true`; `F8`
+toggles it provisionally (F5 turns binds into configuration). The panel edits the
+governor and limit, the GPU backend, HUD visibility and the engine toggles; the
+governor and backend need a restart, the limit and toggles apply live. Every
+change is saved with `prefs.set` into `video`/`engine`.
+
+- **Why**: the requirement was a HUD visible at startup with an immediate hide
+  key, without adding UI inside the game iframe (it fights the game's own hooks
+  and would be lost on its reloads). Persisting avoids re-setting the same
+  options every launch.
+- **Alternatives**: HUD inside the game iframe (fragile), a native second window
+  (focus/cost), hidden by default (contradicts the requirement), `localStorage`
+  (the host file is the source of truth).
+- **Consequence**: F8 is explicitly provisional until F5; the key listener is
+  installed in the top frame and the game window and ignores keystrokes while
+  typing. The HUD is fail-open: no game frame, no HUD, the game keeps playing.
+  The full WebGL renderer string is shown so a silent backend fallback is visible.
+
+## D24 — Metrics are the engine's real draws; 256-interval window; rAF fallback marked `~`
+
+The engine runtime records the interval between **actual draws** (inside
+`skipDraw`), keeps the last 256 intervals and exposes
+`frameStats() → {fps, p95, samples, draws, limit}`. p95 is nearest rank; intervals
+≥ 250 ms are discarded (tab resumes, breakpoints); the window resets when the page
+is hidden and when the cap changes; if no draw happened for 500 ms the stats
+report 0 samples. Without the runtime, with the patch off, or with no recent
+draws, the page samples `requestAnimationFrame` inside the game frame and the HUD
+marks the number `~` (approximate). The bridge method is `metrics.frame`, logged
+every 5 s.
+
+- **Why**: rAF measures loop cadence, not draws: under a draw cap or the game's
+  native 30 it would report 60 and lie. The engine counters are the only honest
+  source and they already know the cap and the native guard. 256 intervals keep
+  the HUD responsive (≈4 s at 60, ≈8.5 s at 30); the first 2048-window version was
+  rejected after a native-30 change took over a minute to appear.
+- **Alternatives**: rAF only (lies), Chromium tracing/`--enable-stats` (heavy and
+  outside the page), reading the renderer's timestamps (not exposed), a fixed
+  time window with per-sample timestamps (more state for little gain at these
+  rates).
+- **Consequence**: the HUD's fps is the draw rate, not the simulation tick rate;
+  `~` is explicitly approximate and not comparable to `engine` rows. A stale
+  counter is never shown as a live 60. The cap's 10% tolerance means the average
+  can be slightly above the target; p95 is draw interval, not input latency.

@@ -56,7 +56,7 @@ world) because it needs to see exactly what the game sees.
 `page/src/bridge.ts` is the **only** point of contact. The host starts a
 WebSocket on `127.0.0.1` with an ephemeral port and a random token; the token
 travels in the first message (`hello`). Current methods: `prefs.get`, `prefs.set`,
-`log`, `metrics.fps`.
+`log`, `metrics.frame`.
 
 Why WebSocket and not CEF's native IPC (`cefQuery`/MessageRouter): the
 MessageRouter requires handlers in the browser and renderer processes, size limits and
@@ -96,11 +96,29 @@ everything: it is achieved by not moving more data than necessary.
   too hot, it gets its own binary path **without** changing the layer
   structure.
 
+## Frame pacing and GPU backend (F2)
+
+- **Governor**: `video.governor` is a startup choice (D21). `gsync` leaves
+  Chromium's flags untouched; `locked`/`unlimited` add
+  `--disable-frame-rate-limit` + `--disable-gpu-vsync`. The `locked` cap is applied
+  live by the engine patch in the live-view draw guard, so simulation, network and
+  input keep the monitor cadence (D22).
+- **Metrics**: the engine runtime counts the draws it actually makes; the page HUD
+  samples `frameStats()` and persists `metrics.frame` every 5 s (D24). A rAF
+  sampler is only the fail-open fallback, marked `~`.
+- **GPU backend**: `video.gpu_backend` maps to `--use-angle=gl|vulkan` (auto = no
+  flag), also startup-only. The HUD shows the real WebGL renderer string so a
+  silent fallback is visible; measured results in [PERFORMANCE.md](PERFORMANCE.md)
+  and [VULKAN.md](VULKAN.md).
+- The HUD, the governor and the sampling live in the top frame (`page/`), the
+  draw counter and the cap inside the engine runtime. All changes persist through
+  `prefs.set`; a missing anchor or a dead runtime never blocks play.
+
 ## Reserved for the future
 
 - **Vulkan acceleration**: today the game is 2D on canvas and runs inside
-  Chromium; the only realistic thing is choosing the ANGLE backend. The space for
-  a render of our own with `wgpu` is reserved as `native/crates/render/` (it is not
+  Chromium; F2 exposes the ANGLE backend choice and measures it, but a render of
+  our own with `wgpu` remains reserved as `native/crates/render/` (it is not
   created until there is something to draw). See [VULKAN.md](VULKAN.md).
 - **Full native client**: the core is kept render-agnostic precisely
   so that the day a client without Chromium exists, the core does not change. See

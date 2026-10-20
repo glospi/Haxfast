@@ -211,11 +211,26 @@ fn patch(original: &str, toggles: &EngineToggles) -> (String, Vec<&'static str>)
         &mut patches,
     );
 
+    // frame-governor: the live-view draw guard is routed through the runtime so
+    // a cap skips only the draw (simulation, network and input keep the monitor
+    // cadence). The vanilla FPS Limit is passed as an argument, so native 30 fps
+    // still wins. The replay/menu loop has a different prefix and is untouched.
+    try_patch(
+        &mut text,
+        toggles.frame_governor,
+        "frame-governor",
+        "Rc(){var a=window.performance.now();1==m.j.Qh.v()&&28.333333333333336>a-this.hd||",
+        "Rc(){var a=window.performance.now();\
+         __HAXFAST_ENGINE__.skipDraw(a,1==m.j.Qh.v()&&28.333333333333336>a-this.hd)||",
+        &mut patches,
+    );
+
     let toggles_json = serde_json::json!({
         "canvas-resize-cache": toggles.canvas_resize_cache,
         "stadium-layer-cache": toggles.stadium_layer_cache,
         "zero-input-tolerance": toggles.zero_input_tolerance,
         "hidden-frame-skip": toggles.hidden_frame_skip,
+        "frame-governor": toggles.frame_governor,
     })
     .to_string();
     let patches_json = serde_json::to_string(&patches).unwrap_or_else(|_| "[]".into());
@@ -358,8 +373,8 @@ mod tests {
         dir
     }
 
-    /// A tiny fake of the interesting fragments of the live bundle (all four
-    /// F1 anchors in order). Text-only: the transforms are string surgery.
+    /// A tiny fake of the interesting fragments of the live bundle (all five
+    /// anchors in order). Text-only: the transforms are string surgery.
     fn fixture() -> String {
         [
             "'use strict';",
@@ -368,6 +383,7 @@ mod tests {
             "sf(){this.Re=window.requestAnimationFrame(M(this,this.sf));this.W.A();",
             "\nthis.za.A();this.Rc()};",
             "Ds(){var b=this.oa.getBoundingClientRect()};",
+            "Rc(){var a=window.performance.now();1==m.j.Qh.v()&&28.333333333333336>a-this.hd||(this.hd=a,this.Bd++);}",
             "Rc(){h=2;this.Dr(c.U);this.Cr(c.U);}",
             "})()",
         ]
@@ -432,11 +448,18 @@ mod tests {
                 "canvas-resize-cache",
                 "stadium-layer-cache",
                 "hidden-frame-skip",
+                "frame-governor",
             ]
         );
         assert!(out.contains("this.Od=0;this.vo=600;"), "{out}");
         assert!(out.contains("__HAXFAST_ENGINE__.rect(this.oa)"), "{out}");
         assert!(out.contains("__HAXFAST_ENGINE__.stadium(this,h,c.U);"), "{out}");
+        assert!(
+            out.contains(
+                "__HAXFAST_ENGINE__.skipDraw(a,1==m.j.Qh.v()&&28.333333333333336>a-this.hd)||"
+            ),
+            "{out}"
+        );
         assert!(
             out.contains(
                 "window.requestAnimationFrame(M(this,this.sf));\
@@ -465,6 +488,7 @@ mod tests {
             stadium_layer_cache: false,
             zero_input_tolerance: false,
             hidden_frame_skip: false,
+            frame_governor: false,
         };
         let (out, patches) = patch(&fixture(), &toggles);
         assert_eq!(patches, vec!["runtime"]);
@@ -472,6 +496,20 @@ mod tests {
         assert!(out.contains("this.oa.getBoundingClientRect()"));
         assert!(out.contains("this.Dr(c.U);this.Cr(c.U);"));
         assert!(out.contains("window.requestAnimationFrame(M(this,this.sf));this.W.A();"));
+        assert!(out.contains("1==m.j.Qh.v()&&28.333333333333336>a-this.hd||"));
+        assert!(!out.contains("__HAXFAST_ENGINE__.skipDraw("));
+    }
+
+    #[test]
+    fn missing_frame_governor_anchor_keeps_the_native_guard() {
+        let broken = fixture().replace(
+            "1==m.j.Qh.v()&&28.333333333333336>a-this.hd",
+            "1==m.j.Qh.v()&&28.333333333333337>a-this.hd",
+        );
+        let (out, patches) = patch(&broken, &EngineToggles::default());
+        assert!(!patches.contains(&"frame-governor"));
+        assert!(out.contains("28.333333333333337>a-this.hd||"));
+        assert!(!out.contains("__HAXFAST_ENGINE__.skipDraw("));
     }
 
     #[test]
@@ -479,6 +517,7 @@ mod tests {
         let (out, patches) = patch(&fixture(), &EngineToggles::default());
         assert!(out.contains(haxfast_core::version()), "{out}");
         assert!(out.contains("\"canvas-resize-cache\":true"), "{out}");
+        assert!(out.contains("\"frame-governor\":true"), "{out}");
         assert!(out.contains("[\"runtime\",\"zero-input-tolerance\""), "{out}");
         assert_eq!(patches.first(), Some(&"runtime"));
     }
