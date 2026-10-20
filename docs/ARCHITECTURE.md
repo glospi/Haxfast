@@ -79,6 +79,11 @@ CEF's `RequestHandler` sees every request. When the URL is
 - The "runtime" (`__HAXFAST_ENGINE__`) is inserted **after** `'use strict';`
   so as not to take the file out of strict mode.
 
+The same `RequestHandler` cancels known ad/sync hosts before they reach the
+network (`ads.rs`); the page layer also hides the official `div.rightbar`. Both
+are fail-open. The only browser UI kept is a Copy/Paste context menu; the F3
+shell replaces the official header and decides external-link behavior.
+
 ## Performance rules
 
 The project's goal is speed, but speed is not achieved by rewriting

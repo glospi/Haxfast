@@ -128,6 +128,31 @@ never reset the profiles (D4/D21); the host logs the effective values at startup
 The HUD writes the whole object through `prefs.set`, the same bridge path D20
 reserved for the engine toggles.
 
+## Shell ads (F2 hardening)
+
+`haxball.com/play` injects cpmstar in `div.rightbar`; that script pulls a long
+tail of ad and cookie-sync networks. HaxFast cancels known ad/sync hosts in
+`RequestHandler` (`host/ads.rs`, fail-open) and the page layer hides the empty
+`div.rightbar`. The game iframe, reCAPTCHA, fonts and the loopback bridge are
+never blocked.
+
+Measured on 20-10-2026, Intel Core i3-N300 / ADL-N, Mesa, X11 60 Hz, `gsync`,
+HUD on, menu idle after a reload (CDP `Network`, 30 CPU/RSS samples at 1 Hz):
+
+| Metric | Before | After |
+| --- | --- | --- |
+| Requests in 20 s | 95 | 24 (23 completed + 1 cpmstar attempt canceled) |
+| Unique hosts | 34 | 5 |
+| `page: loaded` | ~4 s | ~2 s |
+| CPU, process group | 19.1% | 18.0% |
+| RSS, process group | 1508 MB | 1067 MB |
+
+The CPU figure is dominated by the game's 60 fps loop; the drop is small. RSS
+drops by ~440 MB because the ad iframes/renderers are gone, and the shell stops
+talking to ~29 third-party hosts. Startup timestamps have 1 s resolution. The
+`server.cpmstar.com` attempt still appears in CDP because `resource_request_handler`
+sees it, but `on_before_resource_load` cancels it before the network.
+
 ## Verification
 
 ```sh

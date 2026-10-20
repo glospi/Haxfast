@@ -6,6 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use cef::*;
 
+use crate::ads;
 use crate::bridge::BridgeInfo;
 use crate::engine::{self, Engine};
 use crate::log;
@@ -226,6 +227,11 @@ wrap_client! {
     pub struct HaxFastClient;
 
     impl Client {
+        /// F2: the only browser UI kept is a Copy/Paste context menu.
+        fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
+            Some(HaxFastContextMenuHandler::new())
+        }
+
         fn display_handler(&self) -> Option<DisplayHandler> {
             Some(HaxFastDisplayHandler::new())
         }
@@ -339,6 +345,58 @@ wrap_display_handler! {
     }
 }
 
+wrap_context_menu_handler! {
+    // F2: keeps only Copy and Paste from the browser's default menu. The menu
+    // steals DOM focus; the page layer tracks the right-clicked element so the
+    // edit command runs against it.
+    struct HaxFastContextMenuHandler;
+
+    impl ContextMenuHandler {
+        fn on_before_context_menu(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _params: Option<&mut ContextMenuParams>,
+            model: Option<&mut MenuModel>,
+        ) {
+            let Some(model) = model else {
+                return;
+            };
+            model.clear();
+            model.add_item(MenuId::COPY.get_raw() as i32, Some(&CefString::from("Copy")));
+            model.add_item(MenuId::PASTE.get_raw() as i32, Some(&CefString::from("Paste")));
+        }
+
+        fn on_context_menu_command(
+            &self,
+            _browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            _params: Option<&mut ContextMenuParams>,
+            command_id: i32,
+            _event_flags: EventFlags,
+        ) -> i32 {
+            let Some(frame) = frame else {
+                return 0;
+            };
+            // The native menu steals DOM focus and Copy/Paste are no-ops without
+            // it; the page layer tracks the element that was right-clicked.
+            let focus = CefString::from(
+                "window.__HF_CTX_TARGET__ && window.__HF_CTX_TARGET__.focus && window.__HF_CTX_TARGET__.focus()",
+            );
+            frame.execute_java_script(Some(&focus), None, 0);
+            if command_id == MenuId::COPY.get_raw() as i32 {
+                frame.copy();
+                return 1;
+            }
+            if command_id == MenuId::PASTE.get_raw() as i32 {
+                frame.paste();
+                return 1;
+            }
+            0
+        }
+    }
+}
+
 wrap_request_handler! {
     struct HaxFastRequestHandler;
 
@@ -357,6 +415,10 @@ wrap_request_handler! {
                 return None;
             };
             let url = CefString::from(&request.url()).to_string();
+            if let Some(domain) = ads::ad_domain(&url) {
+                ads::log_blocked(domain);
+                return Some(HaxFastBlockedResourceRequestHandler::new());
+            }
             if engine::is_game_bundle(&url) {
                 if state().engine.is_some() {
                     log::info(&format!("engine: intercepted {url}"));
@@ -367,6 +429,23 @@ wrap_request_handler! {
                 ));
             }
             None
+        }
+    }
+}
+
+wrap_resource_request_handler! {
+    // Cancels ad/sync requests before they reach the network.
+    struct HaxFastBlockedResourceRequestHandler;
+
+    impl ResourceRequestHandler {
+        fn on_before_resource_load(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+            _callback: Option<&mut Callback>,
+        ) -> ReturnValue {
+            ReturnValue::CANCEL
         }
     }
 }

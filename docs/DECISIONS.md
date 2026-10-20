@@ -311,3 +311,29 @@ every 5 s.
   `~` is explicitly approximate and not comparable to `engine` rows. A stale
   counter is never shown as a live 60. The cap's 10% tolerance means the average
   can be slightly above the target; p95 is draw interval, not input latency.
+
+## D25 — Ads are canceled at the request handler; shell chrome stays until F3
+
+The official `/play` shell injects cpmstar in `div.rightbar`; it pulls ~30 ad and
+cookie-sync hosts (doubleclick, googlesyndication, rubicon, smartadserver, …).
+`host/ads.rs` suffix-matches those hosts and returns a dedicated
+`ResourceRequestHandler` whose `on_before_resource_load` returns
+`ReturnValue::CANCEL`. The page layer hides the empty `div.rightbar`. The default
+menu is reduced to Copy/Paste; the page layer tracks the right-clicked editable
+element because the native menu steals DOM focus and the edit commands are no-ops
+without it.
+
+- **Why**: this is the only measurable Chromium reduction left without a custom
+  CEF build (the build needed 16 GB RAM and 120–150 GB of disk in this machine's
+  setup). Ads are outside the game, cost network/CPU/RSS, and the official
+  sidebar is not part of HaxBall. Host-suffix matching survives deploy URL
+  changes and path obfuscation.
+- **Alternatives**: custom CEF build or source strip (not viable here), DNS/hosts
+  file (global side effects), CSS-only hiding (ads still load), strict network
+  allowlist (breaks reCAPTCHA and future game endpoints).
+- **Consequence**: the list needs maintenance when ad networks rotate; keep it
+  evidence-based (logs + REA). Never add `haxball.com`, `p2p.haxball.com`,
+  `google.com`/`gstatic.com` (reCAPTCHA), `fonts.googleapis.com` or loopback. Unlike
+  D15, this handler intentionally returns `RV_CANCEL`. The top header/navbar and
+  external-link policy remain F3. Measured effect in
+  [PERFORMANCE.md](PERFORMANCE.md#shell-ads-f2-hardening).

@@ -18,12 +18,28 @@ declare global
   interface Window
   {
     __HF_SELFTEST__?: () => string[];
+    __HF_CTX_TARGET__?: EventTarget | null;
   }
+}
+
+// F2: the native context menu steals DOM focus, and Copy/Paste are no-ops
+// without it. Remember the right-clicked element so the host can refocus it
+// before running the menu command.
+function trackContextTarget(win: Window): void
+{
+  win.document.addEventListener("contextmenu", () =>
+  {
+    const active = win.document.activeElement;
+    win.__HF_CTX_TARGET__ = active && active !== win.document.body ? active : null;
+  }, true);
 }
 
 async function main(): Promise<void>
 {
   if (window !== window.top) return; // top frame only (D14)
+
+  hideAds();
+  trackContextTarget(window);
 
   const connected = await bridge.connect();
   log("page bootstrap", { href: location.href, connected });
@@ -87,6 +103,7 @@ async function main(): Promise<void>
         {
           sampler.detach();
           installHotkey(hud, frame.document);
+          trackContextTarget(frame.window);
           sampler.attach(frame.window);
         }
         game = frame;
@@ -156,6 +173,16 @@ function normalize(raw: Preferences | undefined): Preferences
     engine: { ...defaults.engine, ...(raw.engine ?? {}) },
     video,
   };
+}
+
+// F2: `div.rightbar` is the official shell's ad sidebar; the host cancels the
+// requests and this hides the empty strip (fail-open: layout still works if the
+// class disappears).
+function hideAds(): void
+{
+  const style = document.createElement("style");
+  style.textContent = "div.rightbar{display:none!important}";
+  (document.head ?? document.documentElement).appendChild(style);
 }
 
 function nativeFpsLimit(game: GameFrame | undefined): boolean

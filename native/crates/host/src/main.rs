@@ -1,6 +1,7 @@
 //! HaxFast host: embeds Chromium (CEF), serves the patched engine and the prefs
 //! bridge, and opens the official game page.
 
+mod ads;
 mod app;
 mod bridge;
 mod engine;

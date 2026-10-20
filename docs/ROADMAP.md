@@ -29,6 +29,11 @@ Honest limits: the cap is a ceiling (10% early tolerance), Vulkan was slower tha
 GL on the test machine, the menu/replay loop is not patched (fallback `~`), and
 `F8` is provisional until F5 makes binds configurable.
 
+F2 hardening (20-10-2026): the official shell's ad sidebar is gone (host blocklist
+plus hidden `div.rightbar`), the context menu is Copy/Paste only, and the measured
+effect is in [PERFORMANCE.md](PERFORMANCE.md#shell-ads-f2-hardening) (D25). The
+official header/navbar and the external-link policy remain F3.
+
 ## F3 — Shell UI and skins
 
 Own UI (ES/EN, dark and minimal by default) mounted over the page; CSS-only

@@ -158,6 +158,17 @@ they are worth versioning.
   cef-rs default (`ReturnValue::default()` and the trait's) is **`RV_CANCEL`**:
   CEF cancels the request and **never** calls `GetResourceHandler`, so the patch is
   not served and the page loses the resource. See DECISIONS D15.
+- **The ad handler is the opposite on purpose**: `HaxFastBlockedResourceRequestHandler`
+  returns `RV_CANCEL` to drop known ad/sync hosts before the network. Do not add
+  `haxball.com`, `p2p.haxball.com`, `google.com`/`gstatic.com` (reCAPTCHA),
+  `fonts.googleapis.com` or loopback to `AD_DOMAINS`; a wrong suffix would block
+  the game itself, so the keep test is as important as the block test. New ad
+  domains are added by suffix with a unit test.
+- **The native context menu steals DOM focus.** Copy/Paste via `frame.copy()`/
+  `frame.paste()` does nothing until the right-clicked element is focused again.
+  The page layer stores it in `window.__HF_CTX_TARGET__` and the host runs
+  `execute_java_script` before the edit command; don't remove that step. The menu
+  keeps CEF's standard COPY/PASTE ids so Chromium can also handle them.
 - **Navigate to `/play`, never to the resolved `game.html`**: as the main document it
   stays in "Loading" (it waits for its parent page). The game runs in the `gameframe`
   iframe (same origin). See DECISIONS D14.
